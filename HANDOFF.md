@@ -3,13 +3,15 @@
 ## 任務與狀態
 
 - Repo：`D:/omp/oh-my-pi`；branch：`feat/context-viewer`。
-- 本文件更新前的 HEAD：`a16a069df4`（`docs: update HANDOFF.md`）；本次開工檢查工作區 clean。下個 session 仍須先檢查 Git 狀態。
-- 現有互動式全螢幕 `/context` 已實作；**下列改版方向已由使用者確認，交由下個 session 實作，不必重新詢問是否採用。**
-- 本 session 只更新交接文件，沒有修改 Viewer 程式碼；沒有建立 commit、push 或 PR。不要將以下需求當成已完成。
+- 程式碼 commit：`2f0bcb125b`（`fix(tui): align context viewer accounting and layout`）。下個 session 仍須先檢查 Git 狀態。
+- 互動式全螢幕 `/context`、原版容量分攤、總覽診斷與 footer 分隔結構已實作；ANSI entry 全區塊左框已實作並以正式 CLI／ConPTY 驗收。
+- **Native 多行 entry 全區塊左框尚未實作；所有 Native 視覺效果均尚未在 Tern 原生窗口驗收。** 不可將此狀態寫成「Native 左框已完成，只差測試」。
+- Native 目前保留 `list/item` 選中樣式、entry id 及 select／activate 事件；是否接受 ANSI／Native 外觀不同、暫緩或放棄 Native 左框，尚無使用者明確決定，不自行縮減需求。
+- 既有 commit message 不宣稱 Native 多行左框完成，無須 amend；目前狀態及待辦以本文件為準。未授權 push、PR 或其他對外操作。
 
-## 已確認需求
+## 目前實作契約
 
-### 1. 原版容量統計 + 新版分類比例分攤
+### 1. 原版容量統計 + 新版分類比例分攤（已實作）
 
 **決策：** Used／Buffer／Free Space 全部沿用原版統計；新版仍保留所有細分類及內容瀏覽，按本地估算比例分配原版 Used，供 map 與分類 legend 使用。不是退回原版五分類，也不是只保留文字列表。
 
@@ -29,7 +31,7 @@ E = sum(e[i])，不重複計入 children 或 entries
 ```
 
 - Map 使用 `a[i]`、原版 B、原版 F；不要再用 E 重算 Free Space，或用 E 限縮 Buffer。
-- 分攤總和須等於 U；取整建議 largest remainder，餘數相同時依既有分類順序，避免畫面抖動。
+- 分攤總和等於 U；使用 largest remainder 取整，餘數相同時依既有分類順序，避免畫面抖動。
 - 子分類只分配所屬父分類的預算；不要把 Tool Output 的 per-tool children 又加進總量。Map／legend／子分類顯示口徑須一致。
 - 保留 raw estimates 與正文，不要覆寫成分攤值而失去估算依據或重複套用縮放。
 - UI 清楚標示「分類佔比為估算分配」，不是各類實測值；只保留一套 Free Space／Buffer，不再並列 `Estimated Free Space`／`Estimated Auto-Compact Buffer`。
@@ -53,33 +55,34 @@ E = sum(e[i])，不重複計入 children 或 entries
 實作入口：
 - `packages/coding-agent/src/session/session-stats.ts`：`getContextBreakdown()`、`#anchoredUsedTokens()`；原版 Used 的 provider anchor／增量計算。
 - `packages/tui/src/status-line/context-usage.ts`：`computeNonMessageBreakdown()`、`computeContextBreakdown()`；原版分類、Buffer、Free、threshold。
-- `packages/coding-agent/src/session/context-view.ts`：組裝 snapshot；目前 `usage = breakdown.usedTokens`，但 map 使用的細分類總量是 E，`buffer = min(原版 B, max(0, W - E))`、`free = max(0, W - E - buffer)`，**這兩項是待替換的現況，不是目標算法**。
-- `packages/tui/src/overlays/context-viewer.ts`：`#legendLine()`、`#mapCells()`、`#canZoom`、`describe()`；ANSI／Native 必須使用一致的分攤結果。
+- `packages/coding-agent/src/session/context-view.ts`：組裝唯讀 snapshot；`usage = breakdown.usedTokens`、`buffer = breakdown.autoCompactBufferTokens`、`free = breakdown.freeTokens`，保留 `estimatedTokens`、分類 raw estimates 及正文。
+- `packages/tui/src/overlays/context-viewer.ts`：`allocateTokens()` 與 `#allocated` 保存獨立的父／子分類分攤量；`#legendLine()`、`#mapCells()`、`#canZoom`、`describe()` 使用一致的容量口徑。E=0 時顯示估算不可用，不畫分類 map；W=0 時不計百分比、不畫 map。
 - `packages/tui/src/chrome/context-map.ts`：`planContextMap()`、`contextFitScale()`；沿用共用繪圖能力，不另建第二套 map。
 
-### 2. 診斷資訊整合總覽，移除舊頁面切換
+### 2. 診斷資訊整合總覽（已實作）
 
-- 新總覽直接呈現原版 Used／Buffer／Free、Compaction threshold 與距離門檻的 tokens；Compaction 關閉或已越過門檻時須如實呈現。
-- 啟用 Snapcompact 時保留 estimated savings／wire tokens、相關 prompt／tool-result 資訊及 inactive 原因；原有 wire tokens 為 `max(0, U - savedTokens)`，仍是估算，不稱為實測。
-- 移除 Viewer 內的 `diagnostics` 頁面、`d` 快捷鍵、`Usage diagnostics` Native action 及不再需要的狀態／scroll。**不可刪除共用 `ContextUsageView`，它另有用途。**
-- 現有 snapshot 已含 `breakdown`，由 `computeSessionContextBreakdown(session, { snapcompactSavings: true })` 取得；優先重用，不重新讀取使用者資料或另算一份診斷。
+- 總覽 summary 呈現原版 Used／Buffer／Free、Compaction threshold 與距離門檻的 tokens；Compaction 關閉或已越過門檻時如實呈現。
+- Snapcompact 資訊位於總覽內容區，可捲動查看；重用 `contextSnapcompactLines()` 及既有 formatter，保留 estimated savings、prompt／tool-result 資訊及 inactive 原因。wire tokens 估算為 `max(0, U - savedTokens)`，有節省量時顯示，不稱為實測。
+- Viewer 無 `diagnostics` 頁面、`d` 快捷鍵、`Usage diagnostics` Native action 或專用 diagnostic scroll；共用 `ContextUsageView` 保留。
+- snapshot 的 `breakdown` 由 `computeSessionContextBreakdown(session, { snapcompactSavings: true })` 取得；總覽直接重用，不重新讀取使用者資料或另算一份診斷。Native 總覽內容包含 keyboard scroll request。
 
-### 3. Footer 提示列增加上分隔框線
+### 3. Footer 上分隔框線（已實作；Native 視覺未驗收）
 
-- 比照 `/usage`：在 Viewer 的 body 與 footer 之間加入既有 `PanelDivider`，不改共用元件預設行為。
-- 參考 `packages/tui/src/overlays/usage-dashboard.ts`；元件位於 `packages/tui/src/chrome/overlay-box.ts`。
-- 高度按實際 summary 行數計算；若 summary 仍為 3 行，固定 chrome 共 7 行，body 為 `terminalRows - 7`。診斷整合可能增加 summary，不能盲目固定此數。
-- 同步 ANSI／Native、map、preview 的尺寸預算；極矮畫面須收縮 header/body，不可靠末尾 `.slice()` 截掉 footer／下框。
-- Native `describe()` 自行組裝節點，不會沿用 `#panel` children；在 `actionBar()` 前加入 `node("rule")`。總覽、分類預覽、全文共用分隔結構。
+- Viewer body 與 footer 之間使用既有 `PanelDivider`，不改共用元件預設行為；參考 `packages/tui/src/overlays/usage-dashboard.ts`，元件位於 `packages/tui/src/chrome/overlay-box.ts`。
+- `#layout()` 按可用 terminal rows 與實際 summary 行數計算 body 高度；正常 summary 為 4 行，固定 chrome 為上下框、footer 上分隔線與提示列，共 4 行。極矮畫面收縮 summary／body；不足 4 行時保留可容納的框線／提示。
+- ANSI map、preview、full view 與 Native 使用相同高度計算入口；48×18、48×6 的 ANSI footer 上下框已由正式 CLI／ConPTY 觀察確認。
+- Native `describe()` 在 `actionBar()` 前有 `node("rule")`；總覽、分類預覽、全文共用分隔結構，但 Tern 實際布局與 resize 效果仍需原生窗口驗收。
 
-### 4. 分類預覽以整個 entry 的彩色左邊框標示選中
+### 4. Entry 全區塊選中左框（ANSI 已實作；Native 未完成）
 
-- 參考 `../pi-context-view/src/ui/usage-view.ts` 的 `previewStreamLine()`／`blockGutter()`；兩欄 gutter，選中區塊畫 accent `┃ `，未選中保留等寬空白，取代只在首行放箭頭。
-- 使用既有 `EntryRange [start, end)` 與 `scrollOffset + visibleRowIndex`，涵蓋標題、metadata、正文、正文內空行與全文提示；entry 間的分隔空行在 range 外。標題捲出畫面後，可見正文仍有左框。
-- 先扣 gutter 寬度再準備／render `#previewScroll`，保留右側 scrollbar 欄位；初始化、cache width、`revealRange()`、resize 的寬度須一致，不能加框後才裁掉正文尾字。
-- Cache 保留未加選中樣式的行，只為可見行加框；不要為切換 selection 重 wrap 整類，更不能恢復對大型輸出全文 wrap 的做法。
-- 保留先捲動 oversized entry 再切換條目、Enter／Esc、返回位置、空分類及單條目直開全文語意。不改成全 Viewer 外框染色，不引入 category focus 配色。
-- Native 現在使用 `selectList("entries", …)` 的 `selected`／`item.detail`，由 Tern 繪製；TSP common／list／item 無專用 `borderLeft`。不得假造欄位，也不能以 `tone: "accent"` 或節點測試代替視覺驗收。保留 entry id 與 select／activate 事件；實際 Tern 若不支援整塊左框，須釐清 renderer 變更，明確報告限制。
+- ANSI 兩欄 gutter：選中區塊畫 accent `┃ `，未選中保留等寬空白；參考 `../pi-context-view/src/ui/usage-view.ts` 的 `previewStreamLine()`／`blockGutter()`。
+- 使用 `EntryRange [start, end)` 與 `scrollOffset + visibleRowIndex`，涵蓋標題、metadata、正文、正文內空行與全文提示；entry 間分隔空行在 range 外。標題捲出畫面後，可見正文仍有左框。
+- 先扣 gutter 寬度再準備／render `#previewScroll`，保留右側 scrollbar 欄位；初始化、cache width、`revealRange()`、resize 使用一致寬度，不靠事後裁字補框。
+- Cache 保留未加選中樣式的行，只為可見行加框；切換 selection 不重 wrap 整類，預覽只讀有界前綴。
+- 保留先捲動 oversized entry 再切換條目、Enter／Esc、返回位置、空分類及單條目直開全文語意。不使用全 Viewer 外框染色或 category focus 配色。
+- Native 使用 `selectList("entries", …)` 的 `selected`／`item.detail`，由 Tern 繪製；保留 entry id 與 select／activate 事件。沒有加入虛構 `borderLeft` 欄位，也沒有以 `tone: "accent"` 充當整塊左框。
+- [Tern list／item 文件](https://docs.stencil.so/tern/elements/lists.md#item)明定 `item` 不換行、detail 截斷、children 被忽略；此元件不能直接表示所需的多行 entry 區塊。這不代表所有 Native 元件組合都不可行，也不能直接推論一定要修改 Tern renderer。
+- [Tern common props](https://docs.stencil.so/tern/elements/index.md#props-every-node-takes)與 `packages/wire/src/tsp.ts` 包含 `mark: "pick"`；它是可研究的左側標記能力，不是目前多行 preview 已完成的證據。其他組合仍須保留 entry identity、選取／啟用語意、有界預覽及可達的完整正文，並經 Tern 視覺驗收。
 
 ## 必須保留的既有行為
 
@@ -89,7 +92,7 @@ E = sum(e[i])，不重複計入 children 或 entries
 - System Prompt 來源追蹤與 prompt 原子提交／rollback、失敗 rebuild 已有 coverage，勿順手簡化。涉及 `system-prompt.ts`、`session-tools.ts`、`agent-session.ts`。
 - 使用者要求本 feature 的 **code comments／Changelog 用英文**；聊天與本交接文件用中文，字寬測試的中文 fixture 保留。
 
-## 實作驗收
+## 驗收契約
 
 - 分攤守恆、零值／無估算／超額、父子不重複計量、整數餘數與 Window/Fit 口徑；分類標示為估算分配，原版 U／B／F 不被修改。
 - 總覽保留 Compaction 與 Snapcompact 必要資訊；舊診斷入口完全移除，共用 `ContextUsageView` 不受影響。
@@ -100,17 +103,27 @@ E = sum(e[i])，不重複計入 children 或 entries
 - 更新受影響 package 的英文 `[Unreleased]` Changelog；已有 `packages/coding-agent/CHANGELOG.md`、`packages/tui/CHANGELOG.md`，不要宣稱尚未實作的功能已完成。
 
 相關測試：
-- `packages/tui/test/context-viewer.test.ts`：導航、正文路徑／安全、診斷、responsive；診斷測試須改成整合後的行為契約。
+- `packages/tui/test/context-viewer.test.ts`：導航、正文路徑／安全、總覽診斷、分攤守恆／餘數／零值／超額、Window/Fit、左框、寬字元／scrollbar 及 responsive 布局。
 - `packages/tui/test/context-map.test.ts`：map／Fit。
+- `packages/tui/test/context-usage.test.ts`：共用原版容量計算與 `ContextUsageView` 相關契約。
 - `packages/coding-agent/test/modes/context-view.test.ts`：snapshot、來源、真實 Snapcompact planner。
 - `packages/coding-agent/test/issue-4806-command-output.test.ts`：正式入口、focus、草稿、背景 turn 隔離。
 
-## 驗證環境與限制
+## 已執行驗證與環境限制
 
-- 現有版本有相關測試及 package-local `bun check` 通過紀錄；**新方案尚未實作或驗收，不可沿用舊結果宣稱通過。** 本次文件更新未重跑程式測試。
-- 已知無關失敗：`packages/tui/test/usage-native-describe.test.ts:452` 預期英文 `pm`，本機 locale 輸出「下午」。勿為本 feature 修 locale 或該測試。
-- Windows 下 `xd://tui` 缺 `/bin/sh`；本 session 的 bash `pty: true` 仍被 CLI 判為非 TTY。
-- 可行路徑為 `@oh-my-pi/pi-natives` 的 `PtySession.startArgv()` 啟動正式 CLI，配合既有 `VirtualTerminal` 觀察畫面。
-- 隔離臨時 agent dir 會進 onboarding；可僅在臨時 config 設 `setupVersion: 999`，不改使用者設定。ConPTY 已處理 terminal 回覆，勿再回送 VirtualTerminal CPR replies，以免字元混入 composer。
-- 尚無 Tern 原生窗口的視覺驗收；不能把 Native 節點／事件 coverage 當成已驗收。
-- 未授權 push、PR、Discord 發文或其他外部操作；不要擴大重構範圍。`CONTRIBUTING.md:19–26` 有大型 UI／跨 package 功能事前討論要求，程式完成不代表 maintainer 已接受方向。
+- 對應目前程式碼的 focused suite：**57 pass，0 fail**，涵蓋上述 5 個測試檔。本文件更新不修改程式碼，未重跑程式測試。
+- `packages/tui` 與 `packages/coding-agent` 各自的 `bun check` 均通過（lint、format、type checks）。
+- 正式 `packages/coding-agent/src/cli.ts` 已透過 `PtySession.startArgv()`／ConPTY 啟動，使用既有 `VirtualTerminal` 觀察總覽、Fit、Built-in Tools 分類、標題捲出後的左框、全文、End、resize、Esc 關閉與返回 composer 輸入。不是只有元件組合 probe。
+- ANSI 已觀察 100×30、48×18、48×6；寬字元／長行／scrollbar 與返回位置另有 contract coverage。隔離驗收程序正常退出，臨時 agent dir 已移除。
+- 已知無關失敗：`packages/tui/test/usage-native-describe.test.ts:452` 預期英文 `pm`，本機 locale 輸出「下午」。未為本 feature 重跑或修正該測試。
+- Windows 的 `xd://tui` 缺 `/bin/sh`，bash `pty: true` 路徑仍可能被 CLI 判為非 TTY；可用路徑為 `@oh-my-pi/pi-natives` 的 `PtySession.startArgv()`。
+- 隔離臨時 agent dir 可在臨時 `config.yml` 設 `setupVersion: 999` 避免 onboarding，不改使用者設定。ConPTY 已處理 terminal 回覆，勿再回送 VirtualTerminal CPR replies，以免字元混入 composer。
+- 本機 `where.exe tern` 找不到 executable；尚無 Tern 原生窗口視覺驗收。Native 資料／事件／節點 coverage 能驗契約，不能證明畫面、左框或 footer 正確。
+- 兩個受影響 package 的英文 `[Unreleased]` Changelog 已描述目前功能；ANSI 左框有明確限定，不宣稱 Native 多行左框完成。
+
+## 下一步：Native 驗收與左框方案
+
+1. 取得可操作的 Tern 環境，或由有 Tern 的協作者驗收目前 Native 總覽數字、Compaction／Snapcompact、選取／啟用、全文、Esc、resize 與 footer。請人測現有 Native 有價值，但不能代替實作多行左框。
+2. 先確認 Tern 現有 Native 元件組合能否呈現多行 entry 與整塊左框；不要直接假定必須擴充 renderer。若能實作，保留目前導航／identity／事件與有界預覽契約，並實際驗收。
+3. 若現有能力確實不足，再提出具體 renderer 變更或 ANSI／Native 差異方案，由使用者決定是否暫緩此項；目前不把建議當成已確認的 scope 調整。
+4. 不 amend `2f0bcb125b` 來掩蓋未完成項；新的程式或文件提交依使用者授權處理，不自行 push、建立 PR、發文或請第三方操作。`CONTRIBUTING.md:19–26` 的大型 UI／跨 package 功能事前討論要求仍適用，程式完成不代表 maintainer 已接受方向。
