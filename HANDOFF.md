@@ -36,6 +36,59 @@
 
 **這只是討論與建議，尚未獲得實作指示。** 使用者最後要求先 commit 當前結果；不要直接把建議當成已授權需求。
 
+## 待實作的 Viewer 視覺需求與方案
+
+**範圍：** 使用者要求記錄下列兩項需求並研究實作方式；本節是實作方案，不代表 UI 已修改。獨立診斷頁是否整合總覽仍屬另一項待確認決策，不與這兩項視覺修改綁定。
+
+### 1. 操作提示列上方增加分隔框線
+
+**需求：** Viewer 底部操作提示列要像 `/usage` 一樣有上邊框，與可捲動內容明確分開；總覽、分類預覽、全文與現存診斷頁都採用同一個 footer 結構。
+
+**現有依據：**
+- `packages/tui/src/overlays/usage-dashboard.ts` 的 `UsageDashboardComponent` 使用 `OverlayPanel`，在 body 與 footer 之間放入 `new PanelDivider()`。
+- `packages/tui/src/chrome/overlay-box.ts` 的 `PanelDivider` 由 `OverlayPanel` 畫成接合左右外框的水平線，不必自行拼接字元。
+- `packages/tui/src/overlays/context-viewer.ts` 目前只有 header、body、footer，尚未加入 divider。
+
+**建議實作：**
+1. 在 `ContextViewer` 匯入並插入既有 `PanelDivider`，放在 `#body` 與 `#footer` 之間；不要改共用元件的預設行為，以免影響其他 overlays。
+2. 固定 chrome 在正常尺寸下共 7 行：上框 1、summary 3、divider 1、提示 1、下框 1；body 高度由 `terminalRows - 6` 調整為 `terminalRows - 7`。
+3. 同步核對 `render()`、`describe()`、map geometry 與 category preview 的高度預算，避免 ANSI／Native 共用導航狀態卻用不同的 preview 行數。極矮視窗須明確分配 header/body 空間，不能只靠末尾 `.slice()` 把 footer 或下框截掉。
+4. Native 的 `describe()` 是自行組裝節點，不會自動沿用 `#panel` 的 children；在 `actionBar()` 前加入 `node("rule")`，明確描述相同分區。
+
+### 2. 分類預覽的選中條目改為整個區塊的彩色左邊框
+
+**需求：** Enter 進入多條目的分類預覽後，以連續彩色左邊框標示目前選中的整個 entry，不再只在標題前放箭頭。這是每個 entry 的內側 gutter，不是將整個 Viewer 外框染色。
+
+**參考依據：**
+- `../pi-context-view/src/ui/usage-view.ts` 的 `previewStreamLine()`／`blockGutter()` 使用兩欄 gutter；選中區塊每行畫 `theme.fg("accent", "┃ ")`，未選中區塊保留等寬縮排。
+- 參考實作以所屬 block 判斷每個可見行的選中狀態，因此標題捲出畫面後，正文仍有彩色左邊框。
+- 本 repo 的 `#preparePreview()` 已產生 `EntryRange { start, end, complete }`，`#previewLines()` 已能取得 scroll offset；不必引入參考專案的整套 navigator。
+
+**建議實作：**
+1. 重用 `EntryRange` 的半開區間 `[start, end)`；用 `scrollOffset + visibleRowIndex` 判斷可見行是否屬於選中 entry，取代目前只比對 `range.start` 的箭頭分支。
+2. 選中區塊的標題、metadata、正文、正文內空行與全文提示行均畫 accent 左框；未選中 entry 使用兩個空白，內容不因切換選中項而左右跳動。區塊之間的分隔空行在 range 外，不連接左框。
+3. 固定預留 gutter 的兩欄，先以剩餘寬度準備與 render `#previewScroll`，最後才為可見行加上 gutter。保留 `ScrollView` 的右側 scrollbar 欄位，wrap／truncate 也需預留該欄，不能在已佔滿寬度的行前直接加框再截斷。
+4. `#preparePreview()` 的初始化呼叫、cache 的 width、`revealRange()` 與後續 render 要使用一致的縮減後寬度，避免 Enter 初次開啟或 resize 時重算出不同的 ranges。
+5. cache 保留未加選中樣式的 preview 行與 ranges；只對可見行加框。選擇改變不應重新 wrap 全分類，更不能恢復對大型 Tool Output 全文 wrap 的舊做法。
+6. 保留既有 selection、先捲動 oversized entry 再切換條目、Enter／Esc 與返回位置規則；單條目分類直接進全文的行為不變。使用 theme `accent` 表示 focus，不額外引入 category 配色規則。
+
+**Native 邊界：**
+- 現在使用 `selectList("entries", …)` 的 `selected` 與 `item.detail`，視覺由 Tern 繪製；ANSI gutter 的修改不會自動反映到 Native。
+- `packages/wire/src/tsp.ts` 的 common／list／item props 沒有專用的左邊框屬性，不能假造 `borderLeft` 欄位，也不能把 `tone: "accent"` 當成整塊左框已完成的證據。
+- 實作時保留既有 select／activate 事件與 entry id，先在實際 Tern 視窗確認 multiline item 的選中外觀；若未提供整塊左框，須另行釐清 Tern renderer 所需變更，不能只靠節點測試宣稱兩端視覺一致。本方案尚未驗證 Tern 視覺。
+
+### 驗收與目前方案驗證
+
+後續 UI 實作的驗收：
+- 四種 Viewer 狀態都有 footer 上分隔線；48×18 resize 後，提示列、下框與內容可操作且不超出寬高。
+- 選中 entry 的 metadata、多行正文、內部空行與截斷提示均有連續左框；切換 entry 不左右跳動，分隔空行及鄰近 entry 不被誤標。
+- 選中 entry 標題捲出 viewport 時，其餘可見正文仍有左框；第一筆、最後一筆、空分類、單條目直開全文及 Esc 返回位置維持原有語意。
+- 窄視窗、寬字元、長行與右側 scrollbar 共存時不裁掉正文尾字；大型輸出仍只做有界預覽，全文尾部仍可到達。
+- ANSI 用實際 CLI／PTY 驗收；Native 需實際 Tern 視覺驗收。更新既有 behavior coverage，針對 footer 邊界與區塊選中範圍補必要 regression coverage，不測 source text 或固定提示文案。
+- 實作落地時更新 `packages/tui/CHANGELOG.md` 的英文 user-facing entry；不因單純記錄方案就聲稱功能已完成。
+
+目前只做過無落盤的 Bun 組合 probe：使用既有 `OverlayPanel`、`PanelDivider`、`PanelRows`、`ScrollView`，以兩欄 gutter 與 7 行固定 chrome 產生 48×18 畫面，觀察到 6 行連續左框及 footer 分隔線；輸出為 `rows: 18`、`maxWidth: 48`、`gutterRows: 6`。這只證明元件組合與基本尺寸預算可行，沒有修改 `ContextViewer`，不代表真實導航、resize、scrollbar 或 Tern 已驗收；未新增測試或臨時檔案。
+
 ## 已完成的修復
 
 ### 1. 保留舊診斷資訊
