@@ -47,6 +47,7 @@ export interface ContextViewCategory {
 
 export interface ContextViewData {
 	readonly modelLabel: string;
+	readonly sourceLabel?: string;
 	readonly window: number;
 	readonly usage: number;
 	readonly estimatedTokens: number;
@@ -93,6 +94,7 @@ export class ContextViewer implements Component {
 	readonly #close: () => void;
 	readonly #requestRender: () => void;
 	readonly #getRows: () => number;
+	readonly #toggleSource?: () => void;
 	readonly #overview: MenuSelection<OverviewRow>;
 	readonly #overviewScroll = new ScrollView([], { height: 1 });
 	readonly #previewScroll = new ScrollView([], { height: 1 });
@@ -128,13 +130,14 @@ export class ContextViewer implements Component {
 
 	constructor(
 		data: ContextViewData,
-		options: { onClose: () => void; requestRender: () => void; getRows: () => number },
+		options: { onClose: () => void; requestRender: () => void; getRows: () => number; onToggleSource?: () => void },
 	) {
 		ensureThemeSync();
 		this.#data = data;
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
 		this.#getRows = options.getRows;
+		this.#toggleSource = options.onToggleSource;
 		const allocated = allocateTokens(
 			data.categories.map(category => category.tokens),
 			data.usage,
@@ -313,6 +316,7 @@ export class ContextViewer implements Component {
 		const threshold = breakdown.thresholdTokens;
 		return [
 			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(window)} context · Read-only snapshot`,
+			...(this.#data.sourceLabel ? [this.#safe(this.#data.sourceLabel)] : []),
 			`Used ${formatNumber(usage)} · Buffer ${formatNumber(buffer)} · Free ${formatNumber(free)}${usage > window ? ` · ${formatNumber(usage - window)} over window` : ""}`,
 			threshold === undefined
 				? "Compaction off"
@@ -320,6 +324,12 @@ export class ContextViewer implements Component {
 			this.#allocationAvailable
 				? "Category shares: estimated allocation of Used · Reopen to update"
 				: "Category estimates unavailable · Original totals retained · Reopen to update",
+			...(this.#state !== "overview" && this.#category?.id === "skills"
+				? wrapTextWithAnsi(
+						"Model-input hints; descriptions may be shortened or compressed at source.",
+						Math.max(1, this.#width),
+					)
+				: []),
 		];
 	}
 
@@ -514,7 +524,7 @@ export class ContextViewer implements Component {
 			truncateToWidth(
 				theme.fg(
 					"dim",
-					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}`,
+					`${this.#toggleSource ? "r Preview/Request · " : ""}↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}`,
 				),
 				this.#width,
 			),
@@ -605,12 +615,17 @@ export class ContextViewer implements Component {
 			matchesSelectPageDown(data) ||
 			getKeybindings().matches(data, "tui.select.confirm") ||
 			(["home", "end", "enter", "j", "k"] as const).some(key => matchesKey(data, key)) ||
-			(data === "z" && this.#canZoom)
+			(data === "z" && this.#canZoom) ||
+			(data === "r" && this.#toggleSource !== undefined)
 		);
 	}
 
 	handleInput(data: string): void {
 		if (this.#disposed) return;
+		if (data === "r" && this.#toggleSource) {
+			this.#toggleSource();
+			return;
+		}
 		let by: TspScrollBy | undefined;
 		if (matchesSelectCancel(data) || matchesKey(data, "escape")) this.#back();
 		else if (getKeybindings().matches(data, "tui.select.confirm") || matchesKey(data, "enter")) this.#activate();
@@ -742,6 +757,7 @@ export class ContextViewer implements Component {
 			actionBar([
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
 				...(this.#canZoom ? [actionButton(this.#fit ? "Window" : "Fit", "zoom")] : []),
+				...(this.#toggleSource ? [actionButton("Preview/Request", "source")] : []),
 				actionButton("Close", "close"),
 			]),
 		);
@@ -754,6 +770,7 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (event.act === "zoom") this.handleInput("z");
+			else if (event.act === "source") this.handleInput("r");
 		} else if (event.type === "select" || event.type === "activate") {
 			if (this.#state === "overview") {
 				const item = this.#overview.items.find(item => item.key === event.item);

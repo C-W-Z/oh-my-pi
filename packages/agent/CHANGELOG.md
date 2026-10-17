@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 提供可移除的 model-call observer，在 provider invocation 邊界觀察共用 prepared context，不重跑 preparation 或變更 request。
+
 ## [18.11.3] - 2026-10-16
 
 ### Added

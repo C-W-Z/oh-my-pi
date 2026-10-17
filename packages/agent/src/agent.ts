@@ -414,6 +414,7 @@ export class Agent {
 	#tokenizer = new Tokenizer(this.#state.model);
 	#listeners = new Set<(e: AgentEvent) => void>();
 	#queueListeners = new Set<() => void>();
+	#modelCallObservers = new Set<(context: Context, model: Model) => void>();
 	#abortController?: AbortController;
 	#convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	#transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -943,6 +944,12 @@ export class Agent {
 	subscribe(fn: (e: AgentEvent) => void): () => void {
 		this.#listeners.add(fn);
 		return () => this.#listeners.delete(fn);
+	}
+
+	/** 觀察真正交給 provider 的 prepared context；不執行額外 preparation 或改寫 request。 */
+	observeModelCalls(observer: (context: Context, model: Model) => void): () => void {
+		this.#modelCallObservers.add(observer);
+		return () => this.#modelCallObservers.delete(observer);
 	}
 
 	/** Register a listener notified after any steering/follow-up queue mutator
@@ -1990,11 +1997,24 @@ export class Agent {
 		let partial: AgentMessage | null = null;
 		const completedToolCallIds = new Set<string>();
 		let turnOpen = false;
+		const providerStream = this.streamFn;
+		const streamFn: StreamFn = this.#modelCallObservers.size
+			? (model, context, options) => {
+					for (const observer of this.#modelCallObservers) {
+						try {
+							observer(context, model);
+						} catch (error) {
+							logger.warn("Model call observer failed", { error });
+						}
+					}
+					return providerStream(model, context, options);
+				}
+			: providerStream;
 
 		try {
 			const stream = messages
-				? agentLoop(messages, context, config, loopSignal, this.streamFn)
-				: agentLoopContinue(context, config, loopSignal, this.streamFn);
+				? agentLoop(messages, context, config, loopSignal, streamFn)
+				: agentLoopContinue(context, config, loopSignal, streamFn);
 
 			for await (let event of stream) {
 				if (this.#abortController !== loopAbortController) return;

@@ -9,6 +9,8 @@
 ### Changed
 
 - Context Viewer 的 entry 使用 theme 彩色括號標題與暗色 token 數；preview 顯示省略的原始行數，開啟提示僅出現在選中的 entry，skill 的模型輸入內容可完整捲動。
+- Context Viewer 顯示 snapshot 來源；有 request 記錄時可按 `r` 切換預覽與 request，兩份內容在瀏覽期間保持不變。
+- Skills 的來源壓縮說明集中在區塊頂部，分類與全文瀏覽不再逐項重複標示。
 
 ### Fixed
 

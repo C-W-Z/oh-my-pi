@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { Message } from "@oh-my-pi/pi-ai";
+import type { Context, Message, Model } from "@oh-my-pi/pi-ai";
 import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
@@ -22,7 +22,7 @@ const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["tool-output", "Tool Output"],
 ];
 
-/** Summarize media without retaining binary data, signatures, or message objects. */
+/** 僅保留可瀏覽的文字摘要，不保留 binary、signature 或原始 message。 */
 function contentText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -44,19 +44,55 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
-/** Sample once on open without session hooks, provider transforms, or file I/O. */
+const lastRequests = new WeakMap<AgentSession, { sessionId: string; data: ContextViewData }>();
+const requestObservers = new WeakMap<AgentSession, () => void>();
+
+/** 被動記錄送出流程的結果；切換 session 後不沿用其他 conversation 的證據。 */
+export function observeSessionContextRequests(session: AgentSession): () => void {
+	const existing = requestObservers.get(session);
+	if (existing) return existing;
+	const detach = session.agent.observeModelCalls((context, model) => {
+		const data = buildContextView(session, { context, model });
+		lastRequests.set(session, { sessionId: session.sessionId, data });
+	});
+	const dispose = (): void => {
+		detach();
+		requestObservers.delete(session);
+		lastRequests.delete(session);
+	};
+	requestObservers.set(session, dispose);
+	return dispose;
+}
+
+export function getLastSessionContextRequest(session: AgentSession): ContextViewData | undefined {
+	const request = lastRequests.get(session);
+	return request?.sessionId === session.sessionId ? request.data : undefined;
+}
+
+/** 開啟時取樣；不重跑 hooks、provider transforms 或檔案 I/O。 */
 export function buildSessionContextView(session: AgentSession): ContextViewData {
-	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
+	return buildContextView(session);
+}
+
+function buildContextView(session: AgentSession, request?: { context: Context; model: Model }): ContextViewData {
+	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: !request });
 	const tokenizer = session.agent.tokenizer;
 	const categories: ContextViewCategory[] = CATEGORIES.map(([id, label]) => ({ id, label, tokens: 0, entries: [] }));
 	const byId = new Map(categories.map(category => [category.id, category]));
-	const notices: string[] = [];
+	const notices: string[] = [
+		request
+			? "Prepared context at provider invocation; not the next request or final wire payload. Provider encoding, replay, payload hooks and live steering may change what is sent."
+			: "Current state preview, not a prepared request. Hooks, conversion, provider replay and payload hooks may change what is sent.",
+		...(!request && !getLastSessionContextRequest(session)
+			? ["No prepared request captured for this session in this process."]
+			: []),
+	];
 	const add = (category: ContextCategoryId, entry: ContextViewEntry): void => {
 		const target = byId.get(category)!;
 		target.entries.push(entry);
 		target.tokens += entry.tokens;
 	};
-	const effective = session.systemPrompt;
+	const effective = request ? (request.context.systemPrompt ?? []) : session.systemPrompt;
 	const metadata = session.systemPromptSources;
 	const paired = new Map<number, number>();
 	const matched = new Set<number>();
@@ -126,12 +162,12 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	if (incomplete) notices.push("Some prompt sources could not be attributed; their content remains in System Prompt.");
 
 	const infos = new Map(session.getAllToolInfos().map(info => [info.name, info.sourceInfo]));
-	for (const [index, tool] of session.agent.state.tools.entries()) {
+	for (const [index, tool] of (request ? (request.context.tools ?? []) : session.agent.state.tools).entries()) {
 		const category = session.hasBuiltInTool(tool.name) ? "built-in-tools" : "custom-tools";
 		const parts = [tool.name, tool.description];
 		try {
 			parts.push(JSON.stringify(toolWireSchema(tool), null, 2) ?? "[Schema unavailable]");
-			const examples = renderToolExamples(tool);
+			const examples = request ? undefined : renderToolExamples(tool);
 			if (examples) parts.push(examples);
 		} catch (error) {
 			parts.push(`Schema unavailable: ${error instanceof Error ? error.message : String(error)}`);
@@ -143,7 +179,11 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			text: parts.join("\n\n"),
 			info: source?.source ?? "unknown",
 			path: source?.path,
-			tokens: estimateContextToolSchemaTokens([tool], tokenizer, session.model),
+			tokens: estimateContextToolSchemaTokens(
+				[request ? { ...tool, examples: undefined } : tool],
+				tokenizer,
+				request?.model ?? session.model,
+			),
 		});
 	}
 	const groups = new Map<string, ContextViewCategory>();
@@ -160,12 +200,11 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		chronology.set(entry.id, timestamp);
 		add("tool-output", entry);
 	};
-	for (const [messageIndex, original] of session.messages.entries()) {
+	for (const [messageIndex, original] of (request ? request.context.messages : session.messages).entries()) {
 		const execution =
 			original.role === "bashExecution" ? "bash" : original.role === "pythonExecution" ? "python" : undefined;
-		// Convert local OMP messages only; preserve saved assistant blocks that replay policies may hide.
-		const messages: readonly Message[] =
-			original.role === "assistant" || original.role === "toolResult" ? [original] : convertToLlm([original]);
+		// Request 已完成共用 preparation；preview 只轉換本地訊息，不宣稱等同 wire payload。
+		const messages: readonly Message[] = request ? [original as Message] : convertToLlm([original]);
 		for (const [convertedIndex, message] of messages.entries()) {
 			const prefix = `${messageIndex}/${convertedIndex}`;
 			const info = `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`;
@@ -263,7 +302,8 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	const estimatedTokens = categories.reduce((sum, category) => sum + category.tokens, 0);
 	const window = breakdown.contextWindow;
 	return {
-		modelLabel: session.model?.name ?? session.model?.id ?? "no model",
+		modelLabel: (request?.model ?? session.model)?.name ?? (request?.model ?? session.model)?.id ?? "no model",
+		sourceLabel: request ? `Last prepared request · ${new Date().toISOString()}` : "Current preview · Not prepared",
 		window,
 		usage: breakdown.usedTokens,
 		estimatedTokens,

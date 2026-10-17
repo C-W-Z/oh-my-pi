@@ -6,9 +6,14 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { Settings } from "../../src/config/settings";
 import { AgentSession } from "../../src/session/agent-session";
 import { SessionManager } from "../../src/session/session-manager";
-import { buildSessionContextView } from "../../src/session/context-view";
+import {
+	buildSessionContextView,
+	getLastSessionContextRequest,
+	observeSessionContextRequests,
+} from "../../src/session/context-view";
 import { buildSystemPrompt, type SystemPromptSources } from "../../src/system-prompt";
 import type { ContextViewData } from "@oh-my-pi/pi-tui/overlays/context-viewer";
+import { convertToLlm } from "../../src/session/messages";
 
 const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 const sessions: AgentSession[] = [];
@@ -32,6 +37,7 @@ function tool(name: string): AgentTool {
 function sessionWith(
 	options: {
 		prompt?: string[];
+		agent?: Agent;
 		sources?: SystemPromptSources;
 		messages?: AgentMessage[];
 		tools?: AgentTool[];
@@ -41,14 +47,16 @@ function sessionWith(
 ): AgentSession {
 	const tools = options.tools ?? [];
 	const session = new AgentSession({
-		agent: new Agent({
-			initialState: {
-				model,
-				systemPrompt: options.prompt ?? ["opaque system"],
-				tools,
-				messages: options.messages ?? [],
-			},
-		}),
+		agent:
+			options.agent ??
+			new Agent({
+				initialState: {
+					model,
+					systemPrompt: options.prompt ?? ["opaque system"],
+					tools,
+					messages: options.messages ?? [],
+				},
+			}),
 		sessionManager: SessionManager.inMemory(),
 		settings: options.settings ?? Settings.isolated({ "compaction.enabled": false, "todo.enabled": false }),
 		modelRegistry: { getApiKey: async () => "test-key" } as never,
@@ -84,6 +92,110 @@ const reply = (content: AssistantMessage["content"]): AssistantMessage => ({
 });
 
 describe("context snapshot", () => {
+	it("records prepared content from a real provider call without replaying hooks when viewing or leaking later state", async () => {
+		const bodies: unknown[] = [];
+		const server = Bun.serve({
+			hostname: "127.0.0.1",
+			port: 0,
+			async fetch(request) {
+				bodies.push(await request.json());
+				const events = [
+					{
+						type: "message_start",
+						message: {
+							id: "context-proof",
+							role: "assistant",
+							content: [],
+							usage: { input_tokens: 10, output_tokens: 0 },
+						},
+					},
+					{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+					{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } },
+					{ type: "content_block_stop", index: 0 },
+					{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+					{ type: "message_stop" },
+				];
+				return new Response(
+					events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+					{
+						headers: { "content-type": "text/event-stream" },
+					},
+				);
+			},
+		});
+		let transforms = 0;
+		let conversions = 0;
+		let providerTransforms = 0;
+		let payloadHooks = 0;
+		const read = tool("read");
+		const agent = new Agent({
+			initialState: {
+				model: { ...model, baseUrl: server.url.toString() },
+				systemPrompt: ["raw policy"],
+				tools: [read],
+			},
+			getApiKey: () => "local-test-key",
+			intentTracing: true,
+			transformContext: async messages => {
+				transforms++;
+				return messages.map(message =>
+					message.role === "user" ? { ...message, content: "transformed question" } : message,
+				);
+			},
+			convertToLlm: messages => {
+				conversions++;
+				return convertToLlm(messages).map(message =>
+					message.role === "user" ? { ...message, content: `converted ${message.content}` } : message,
+				);
+			},
+			transformProviderContext: context => {
+				providerTransforms++;
+				return { ...context, systemPrompt: ["provider policy"] };
+			},
+			onPayload: payload => {
+				payloadHooks++;
+				return payload;
+			},
+		});
+		const session = sessionWith({ agent, tools: [read] });
+		const detach = observeSessionContextRequests(session);
+		try {
+			expect(getLastSessionContextRequest(session)).toBeUndefined();
+			buildSessionContextView(session);
+			expect([transforms, conversions, providerTransforms, payloadHooks]).toEqual([0, 0, 0, 0]);
+			agent.setBeforeModelCall(context => {
+				context.systemPrompt!.push("gate policy");
+			});
+			await agent.prompt("raw question");
+			const prepared = getLastSessionContextRequest(session)!;
+			const saved = JSON.stringify(prepared);
+			expect(category(prepared, "system-prompt").entries.map(entry => entry.text)).toEqual([
+				"provider policy",
+				"gate policy",
+			]);
+			expect(category(prepared, "user-messages").entries.map(entry => entry.text)).toEqual([
+				"converted transformed question",
+			]);
+			expect(category(prepared, "built-in-tools").entries[0]?.text).toContain('"i"');
+			const wire = JSON.stringify(bodies);
+			expect(wire).toContain("provider policy");
+			expect(wire).toContain("gate policy");
+			expect(wire).toContain("converted transformed question");
+			expect(wire).not.toContain("raw question");
+			expect(wire).not.toContain("raw policy");
+			agent.setSystemPrompt(["later policy"]);
+			agent.replaceMessages([{ role: "user", content: "rewound question", timestamp: 2 }]);
+			buildSessionContextView(session);
+			expect(JSON.stringify(getLastSessionContextRequest(session))).toBe(saved);
+			expect([transforms, conversions, providerTransforms, payloadHooks, bodies.length]).toEqual([1, 1, 1, 1, 1]);
+			await session.sessionManager.newSession();
+			expect(getLastSessionContextRequest(session)).toBeUndefined();
+		} finally {
+			detach();
+			server.stop(true);
+		}
+	});
+
 	it("retains compaction thresholds and computes optional wire savings without changing content capacity", () => {
 		const prompt = ["Repeated context policy for the next model request.\n".repeat(1000)];
 		const settings = Settings.isolated({
@@ -179,7 +291,6 @@ describe("context snapshot", () => {
 		data = buildSessionContextView(session);
 		expect(category(data, "instruction-files").entries).toEqual([]);
 		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["rewritten FILE"]);
-		expect(data.notices).toHaveLength(1);
 		const ambiguous = sessionWith({
 			prompt: ["FILE FILE"],
 			sources: { blocks: ["FILE FILE"], sources: [{ ...sources.sources[0]!, blockIndex: 0 }] },

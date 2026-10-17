@@ -189,6 +189,13 @@ describe("issue #4806 command output during streaming", () => {
 			expect(abort).not.toHaveBeenCalled();
 			expect(JSON.stringify(session.messages)).toBe(messages);
 			expect(requests).toBe(1);
+			overlay.component.handleInput?.("r");
+			const requestOverlay = mode.ui.overlayStack.at(-1)!;
+			const requestSnapshot = requestOverlay.component.render(100);
+			expect(requestSnapshot).not.toEqual(snapshot);
+			expect(mode.ui.getFocused()).toBe(requestOverlay.component);
+			expect(mode.ui.overlayStack).toHaveLength(1);
+			expect(mode.editor.getText()).toBe("draft must survive");
 			release.resolve();
 			await pending;
 			expect(
@@ -200,8 +207,11 @@ describe("issue #4806 command output during streaming", () => {
 						),
 				),
 			).toBe(true);
-			expect(overlay.component.render(100)).toEqual(snapshot);
-			overlay.component.handleInput?.("\x1b");
+			expect(requestOverlay.component.render(100)).toEqual(requestSnapshot);
+			requestOverlay.component.handleInput?.("r");
+			const previewOverlay = mode.ui.overlayStack.at(-1)!;
+			expect(previewOverlay.component.render(100)).toEqual(snapshot);
+			previewOverlay.component.handleInput?.("\x1b");
 			expect(mode.ui.hasOverlay()).toBe(false);
 			expect(mode.ui.getFocused()).toBe(mode.editor);
 			expect(mode.editor.getText()).toBe("draft must survive");

@@ -52,7 +52,11 @@ import { ContextViewer } from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import type { OverlayHandle } from "@oh-my-pi/pi-tui";
 import { ReportPanel } from "@oh-my-pi/pi-tui/overlays/report-panel";
 import type { TspText } from "@oh-my-pi/pi-wire";
-import { buildSessionContextView } from "../../session/context-view";
+import {
+	buildSessionContextView,
+	getLastSessionContextRequest,
+	observeSessionContextRequests,
+} from "../../session/context-view";
 import { buildHotkeysMarkdown, HotkeysSheetComponent } from "@oh-my-pi/pi-tui/hotkeys-markdown";
 import { isNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { buildToolsMarkdown } from "@oh-my-pi/pi-tui/prompt/tools-markdown";
@@ -195,6 +199,7 @@ export class CommandController {
 		private readonly ctx: InteractiveModeContext,
 		forkTerminalDependencies: Partial<ForkTerminalDependencies> = {},
 	) {
+		ctx.session.addDisposer(observeSessionContextRequests(ctx.session));
 		this.#forkTerminalDependencies = {
 			classifyTerminalMultiplexer,
 			environment: () => process.env,
@@ -959,22 +964,33 @@ export class CommandController {
 			this.ctx.showWarning("Context usage is unavailable: no model is selected for this session.");
 			return;
 		}
-		this.#clearReport();
-		this.#closeReportSheet();
-		const viewer = new ContextViewer(data, {
-			onClose: () => this.#closeReportSheet(),
-			requestRender: () => this.ctx.ui.requestRender(),
-			getRows: () => this.ctx.ui.terminal.rows,
-		});
-		this.#reportSheet = this.ctx.ui.showOverlay(viewer, {
-			anchor: "bottom-center",
-			width: "100%",
-			maxHeight: "100%",
-			margin: 0,
-			fullscreen: true,
-		});
-		this.ctx.ui.setFocus(viewer);
-		this.ctx.ui.requestRender();
+		const request = getLastSessionContextRequest(this.ctx.session);
+		let showRequest = false;
+		const show = (): void => {
+			this.#clearReport();
+			this.#closeReportSheet();
+			const viewer = new ContextViewer(showRequest ? request! : data, {
+				onClose: () => this.#closeReportSheet(),
+				requestRender: () => this.ctx.ui.requestRender(),
+				getRows: () => this.ctx.ui.terminal.rows,
+				onToggleSource: request
+					? () => {
+							showRequest = !showRequest;
+							show();
+						}
+					: undefined,
+			});
+			this.#reportSheet = this.ctx.ui.showOverlay(viewer, {
+				anchor: "bottom-center",
+				width: "100%",
+				maxHeight: "100%",
+				margin: 0,
+				fullscreen: true,
+			});
+			this.ctx.ui.setFocus(viewer);
+			this.ctx.ui.requestRender();
+		};
+		show();
 	}
 
 	async handleMemoryCommand(text: string): Promise<void> {
