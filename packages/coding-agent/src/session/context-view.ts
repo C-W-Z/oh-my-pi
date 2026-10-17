@@ -118,7 +118,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		if (remaining)
 			add("system-prompt", {
 				id: `system-prompt/${index}`,
-				label: `System block ${index + 1}`,
+				label: `System Block ${index + 1}`,
 				text: remaining,
 				tokens: tokenizer.countTokens(remaining),
 			});
@@ -201,6 +201,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 					blockTokens[index] = tokens;
 					reasoningBudget -= tokens;
 				}
+				let thinkingIndex = 0;
 				for (const [blockIndex, block] of message.content.entries()) {
 					const category =
 						block.type === "toolCall"
@@ -218,7 +219,12 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 					} else text = contentText([block]);
 					add(category, {
 						id: `${category}/${prefix}/${blockIndex}`,
-						label: block.type === "toolCall" ? block.name : `${block.type} · message ${messageIndex + 1}`,
+						label:
+							block.type === "toolCall"
+								? block.name
+								: category === "assistant-thinking"
+									? `Thinking ${++thinkingIndex}/${reasoningIndexes.length} · message ${messageIndex + 1}`
+									: `${block.type} · message ${messageIndex + 1}`,
 						info,
 						text,
 						tokens: blockTokens[blockIndex]!,

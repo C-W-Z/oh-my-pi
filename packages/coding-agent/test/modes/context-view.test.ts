@@ -191,6 +191,7 @@ describe("context snapshot", () => {
 		const message = reply([
 			{ type: "text", text: "visible answer" },
 			{ type: "thinking", thinking: "readable thought", thinkingSignature: "private-signature" },
+			{ type: "thinking", thinking: "", thinkingSignature: "private-encoded-thinking" },
 			{ type: "redactedThinking", data: "private-ciphertext" },
 			{ type: "toolCall", name: "read", id: "duplicate", arguments: { path: "notes.txt" } },
 		]);
@@ -199,11 +200,12 @@ describe("context snapshot", () => {
 		expect(category(data, "assistant-messages").entries.map(entry => entry.text)).toEqual(["visible answer"]);
 		expect(category(data, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
 			"readable thought",
+			"[Encoded thinking]",
 			"[Redacted thinking]",
 		]);
 		expect(category(data, "tool-calls").entries[0]?.text).toContain('"path": "notes.txt"');
 		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countMessages([message]));
-		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-ciphertext/);
+		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-encoded-thinking|private-ciphertext/);
 	});
 
 	it("sorts per-tool totals by tokens then first appearance and saved results by timestamp then conversation order", () => {

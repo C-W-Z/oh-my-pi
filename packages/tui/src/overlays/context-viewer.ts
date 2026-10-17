@@ -1,4 +1,4 @@
-import { formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
+import { countNewlines, formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
 import type { TspScrollBy, TspSpan } from "@oh-my-pi/pi-wire";
 import { contextFitScale, planContextMap } from "../chrome/context-map";
 import {
@@ -70,6 +70,7 @@ interface EntryRange {
 	start: number;
 	end: number;
 	complete: boolean;
+	hiddenLines: number;
 }
 
 function allocateTokens(weights: readonly number[], total: number): number[] | undefined {
@@ -120,6 +121,7 @@ export class ContextViewer implements Component {
 	#fullCache: { entry: ContextViewEntry; width: number; lines: string[] } | undefined;
 	#wrapped = new Map<string, { width: number; lines: string[] }>();
 	#safeEntries = new Map<string, string>();
+	#sourceLineCounts = new Map<string, number>();
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
 	#overviewBoundary: "first" | "last" | undefined;
 	#disposed = false;
@@ -193,6 +195,7 @@ export class ContextViewer implements Component {
 		this.#fullCache = undefined;
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
+		this.#sourceLineCounts.clear();
 		this.#panel.invalidate();
 	}
 
@@ -200,6 +203,7 @@ export class ContextViewer implements Component {
 		this.#disposed = true;
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
+		this.#sourceLineCounts.clear();
 		this.#overviewScroll.dispose();
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
@@ -233,13 +237,71 @@ export class ContextViewer implements Component {
 		return lines;
 	}
 
-	/** Wrap only a bounded prefix for previews, deferring large output wrapping until the full entry opens. */
-	#entryPreview(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
+	/** Preview 只 wrap 有界前綴；省略數計算原始行，不展開尾端內容。 */
+	#entryPreview(
+		entry: ContextViewEntry,
+		width: number,
+		budget: number,
+	): { lines: string[]; complete: boolean; hiddenLines: number } {
+		if (this.#category?.id === "skills")
+			return { lines: this.#entryLines(entry, width), complete: true, hiddenLines: 0 };
 		const prefix = entry.text.slice(0, Math.max(1, width) * budget * 2);
-		const lines = this.#safeContent(prefix)
-			.split("\n")
-			.flatMap(line => (line ? wrapTextWithAnsi(line, Math.max(1, width)) : [""]));
-		return { lines: lines.slice(0, budget), complete: prefix.length === entry.text.length && lines.length <= budget };
+		const paragraphs = this.#safeContent(prefix).split("\n");
+		const lines: string[] = [];
+		let shownSourceLines = 0;
+		for (const [index, paragraph] of paragraphs.entries()) {
+			const wrapped = paragraph ? wrapTextWithAnsi(paragraph, Math.max(1, width)) : [""];
+			const remaining = budget - lines.length;
+			lines.push(...wrapped.slice(0, remaining));
+			if (wrapped.length > remaining) break;
+			if (index < paragraphs.length - 1 || prefix.length === entry.text.length) shownSourceLines++;
+			if (lines.length === budget) break;
+		}
+		let total = this.#sourceLineCounts.get(entry.id);
+		if (total === undefined) {
+			total = countNewlines(entry.text.replace(/\r\n?/g, "\n")) + 1;
+			this.#sourceLineCounts.set(entry.id, total);
+		}
+		const hiddenLines = Math.max(0, total - shownSourceLines);
+		return { lines, complete: hiddenLines === 0, hiddenLines };
+	}
+
+	#entryLabel(entry: ContextViewEntry): string {
+		const label = this.#category?.id === "instruction-files" ? (entry.path ?? entry.label) : entry.label;
+		return this.#safe(shortenPath(label)).replace(/\n/g, " ");
+	}
+
+	#entryInfo(entry: ContextViewEntry): string {
+		return this.#safe(
+			[entry.info, this.#category?.id !== "instruction-files" && entry.path ? shortenPath(entry.path) : undefined]
+				.filter(Boolean)
+				.join(" · "),
+		);
+	}
+
+	#entryHeader(entry: ContextViewEntry): TspSpan[] {
+		const color = CONTEXT_PRESENTATION[this.#category!.id].color;
+		return [
+			span("[", "dim"),
+			span(this.#entryLabel(entry), `${color} strong`),
+			span(`] ${entry.tokens.toLocaleString("en-US")} tokens`, "dim"),
+		];
+	}
+
+	#entryHeaderLine(entry: ContextViewEntry): string {
+		const color = CONTEXT_PRESENTATION[this.#category!.id].color;
+		return (
+			theme.fg("dim", "[") +
+			theme.fg(color, theme.bold(this.#entryLabel(entry))) +
+			theme.fg("dim", `] ${entry.tokens.toLocaleString("en-US")} tokens`)
+		);
+	}
+
+	#truncationMarker(hiddenLines: number, selected: boolean): string {
+		return (
+			theme.fg("dim", `  … +${hiddenLines} lines`) +
+			(selected ? theme.fg("dim", " · ") + theme.fg("accent", "Enter - View Content") : "")
+		);
 	}
 
 	#share(tokens: number): string {
@@ -378,24 +440,14 @@ export class ContextViewer implements Component {
 		const ranges: EntryRange[] = [];
 		for (const entry of category.entries) {
 			const start = lines.length;
-			lines.push(truncateToWidth(theme.bold(this.#safe(entry.label).replace(/\n/g, " ")), width - 1));
-			if (entry.info || entry.path)
-				lines.push(
-					truncateToWidth(
-						theme.fg(
-							"dim",
-							this.#safe(
-								[entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "),
-							).replace(/\n/g, " "),
-						),
-						width - 1,
-					),
-				);
+			lines.push(truncateToWidth(this.#entryHeaderLine(entry), width - 1));
+			const info = this.#entryInfo(entry);
+			if (info) lines.push(...wrapTextWithAnsi(theme.fg("dim", info), Math.max(1, width - 1)));
 			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
 			const content = this.#entryPreview(entry, Math.max(1, width - 3), budget);
 			lines.push(...content.lines.map(line => `  ${line}`));
-			if (!content.complete) lines.push(theme.fg("dim", "  Enter to view full content"));
-			ranges.push({ start, end: lines.length, complete: content.complete });
+			if (!content.complete) lines.push(this.#truncationMarker(content.hiddenLines, false));
+			ranges.push({ start, end: lines.length, complete: content.complete, hiddenLines: content.hiddenLines });
 			lines.push("");
 		}
 		if (lines.length === 0) lines.push("No content in this category.");
@@ -415,6 +467,8 @@ export class ContextViewer implements Component {
 		const offset = this.#previewScroll.getScrollOffset();
 		return this.#previewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
+			if (selected && !range.complete && offset + index === range.end - 1)
+				line = truncateToWidth(this.#truncationMarker(range.hiddenLines, true), contentWidth - 1);
 			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
 		});
 	}
@@ -428,8 +482,9 @@ export class ContextViewer implements Component {
 		const entry = this.#entry!;
 		this.#fullScroll.setHeight(height);
 		if (this.#fullCache?.entry !== entry || this.#fullCache.width !== width) {
-			const info = [entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · ");
+			const info = this.#entryInfo(entry);
 			const lines = [
+				truncateToWidth(this.#entryHeaderLine(entry), Math.max(1, width - 1)),
 				...(info ? wrapTextWithAnsi(theme.fg("dim", this.#safe(info)), Math.max(1, width - 1)) : []),
 				...this.#entryLines(entry, Math.max(1, width - 1)),
 			];
@@ -443,11 +498,7 @@ export class ContextViewer implements Component {
 		const terminalRows = Math.max(1, this.#getRows());
 		const summary = this.#layout();
 		this.#panel.title =
-			this.#state === "overview"
-				? `Context · ${this.#fit ? "Fit" : "Window"}`
-				: this.#state === "category"
-					? this.#safe(this.#category!.label)
-					: this.#safe(this.#entry!.label);
+			this.#state === "overview" ? `Context · ${this.#fit ? "Fit" : "Window"}` : this.#safe(this.#category!.label);
 		this.#header.setHeight(summary.length);
 		this.#header.setLines(summary.map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
 		const lines =
@@ -595,10 +646,8 @@ export class ContextViewer implements Component {
 		this.#width = Math.max(1, cx.cols - 4);
 		const summary = this.#layout();
 		const children: NativeNode[] = summary.map(line => text([span(line, "dim")], { wrap: "none" }));
-		if (this.#state === "entry" || this.#state === "category")
-			children.push(
-				text([span(this.#safe(this.#state === "category" ? this.#category!.label : this.#entry!.label), "strong")]),
-			);
+		if (this.#state === "category") children.push(text([span(this.#safe(this.#category!.label), "strong")]));
+		else if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
 		if (this.#state === "overview") {
 			const items = this.#overview.items.map(item => {
 				const presentation = CONTEXT_PRESENTATION[item.id];
@@ -647,21 +696,27 @@ export class ContextViewer implements Component {
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
 			this.#previewLines(this.#width, this.#height);
-			const items = this.#entries.items.map(entry =>
-				node(
-					"item",
-					{
-						label: this.#safe(entry.label),
-						detail: this.#entryPreview(
-							entry,
-							Math.max(1, this.#width - 5),
-							Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - 2)),
-						).lines.join("\n"),
-					},
-					undefined,
-					entry.id,
-				),
-			);
+			const items = this.#entries.items.map(entry => {
+				const content = this.#entryPreview(
+					entry,
+					Math.max(1, this.#width - 5),
+					Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - 2)),
+				);
+				const info = this.#entryInfo(entry);
+				const detail = [
+					...(info ? [span(`${info}\n`, "dim")] : []),
+					span(content.lines.join("\n")),
+					...(!content.complete
+						? [
+								span(`\n… +${content.hiddenLines} lines`, "dim"),
+								...(entry.id === this.#entries.selectedKey
+									? [span(" · ", "dim"), span("Enter - View Content", "accent")]
+									: []),
+							]
+						: []),
+				];
+				return node("item", { label: this.#entryHeader(entry), detail }, undefined, entry.id);
+			});
 			children.push(
 				selectList("entries", items, {
 					selected: this.#entries.selectedKey,
@@ -670,9 +725,7 @@ export class ContextViewer implements Component {
 			);
 		} else {
 			this.#prepareFull(this.#width, this.#height);
-			const info = [this.#entry!.info, this.#entry!.path ? shortenPath(this.#entry!.path) : undefined]
-				.filter(Boolean)
-				.join(" · ");
+			const info = this.#entryInfo(this.#entry!);
 			const body = node(
 				"col",
 				{},

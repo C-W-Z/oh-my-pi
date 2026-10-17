@@ -6,6 +6,14 @@
 
 - Added an ANSI and native Context Viewer with detailed category navigation, full-content browsing, original usage totals, proportionally estimated category shares, and integrated compaction and Snapcompact diagnostics; ANSI previews mark the whole selected entry and keep footer borders visible on small terminals.
 
+### Changed
+
+- Context Viewer 的 entry 使用 theme 彩色括號標題與暗色 token 數；preview 顯示省略的原始行數，開啟提示僅出現在選中的 entry，skill 的模型輸入內容可完整捲動。
+
+### Fixed
+
+- Instruction Files 僅在彩色標題顯示一次縮短路徑，不再重複一列 path metadata；正文內的原始路徑保持不變。
+
 ## [18.11.3] - 2026-10-16
 
 ### Added

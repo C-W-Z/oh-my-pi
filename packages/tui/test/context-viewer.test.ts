@@ -213,6 +213,58 @@ describe("ContextViewer navigation", () => {
 	});
 });
 
+describe("ContextViewer preview boundaries", () => {
+	it("keeps a long skill hint scrollable in its category without requiring a full-content level", () => {
+		const data = fixture();
+		const skills = data.categories.find(category => category.id === "skills")!;
+		skills.entries = [
+			{
+				id: "skill/0",
+				label: "long skill",
+				tokens: 100,
+				path: "/fixture/skills/long/SKILL.md",
+				text: `${"routing hint\n".repeat(60)}skill-description-tail`,
+			},
+			{ id: "skill/1", label: "next skill", tokens: 1, text: "next routing hint" },
+		];
+		const h = harness(data);
+		h.resize(12);
+		h.render(48);
+		select(h.viewer, "skills");
+		let screen = h.render(48).join("\n");
+		for (let index = 0; index < 70 && !screen.includes("skill-description-tail"); index++) {
+			h.viewer.handleInput("j");
+			screen = h.render(48).join("\n");
+		}
+		expect(screen).toContain("skill-description-tail");
+		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("skill/0");
+		h.viewer.handleInput("\x1b");
+		expect(selected(h.viewer.describe(cx))).toBe("skills");
+	});
+
+	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
+		const data = fixture();
+		const output = data.categories.find(category => category.id === "tool-output")!;
+		output.entries[0] = {
+			id: "result/0",
+			label: "single line",
+			tokens: 100,
+			text: `${"寬字 ".repeat(10000)}single-line-tail`,
+		};
+		const h = harness(data);
+		h.resize(12);
+		h.render(48);
+		select(h.viewer, "tool-output");
+		expect(h.render(48).join("\n")).not.toContain("single-line-tail");
+		h.viewer.handleInput("\r");
+		h.render(48);
+		h.viewer.handleInput("\x1b[F");
+		expect(h.render(48).join("\n")).toContain("single-line-tail");
+		h.viewer.handleInput("\x1b");
+		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
+	});
+});
+
 describe("ContextViewer presentation", () => {
 	it("preserves body paths while sanitizing terminal controls in ANSI and native content", () => {
 		const data = fixture();
