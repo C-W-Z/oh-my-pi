@@ -35,6 +35,7 @@ function sessionWith(
 		sources?: SystemPromptSources;
 		messages?: AgentMessage[];
 		tools?: AgentTool[];
+		settings?: Settings;
 		rebuild?: () => Promise<{ systemPrompt: string[]; sources?: SystemPromptSources }>;
 	} = {},
 ): AgentSession {
@@ -49,7 +50,7 @@ function sessionWith(
 			},
 		}),
 		sessionManager: SessionManager.inMemory(),
-		settings: Settings.isolated({ "compaction.enabled": false, "todo.enabled": false }),
+		settings: options.settings ?? Settings.isolated({ "compaction.enabled": false, "todo.enabled": false }),
 		modelRegistry: { getApiKey: async () => "test-key" } as never,
 		toolRegistry: new Map(tools.map(tool => [tool.name, tool])),
 		builtInToolNames: ["read"],
@@ -83,6 +84,24 @@ const reply = (content: AssistantMessage["content"]): AssistantMessage => ({
 });
 
 describe("context snapshot", () => {
+	it("retains compaction thresholds and computes optional wire savings without changing content capacity", () => {
+		const prompt = ["Repeated context policy for the next model request.\n".repeat(1000)];
+		const settings = Settings.isolated({
+			"compaction.enabled": true,
+			"todo.enabled": false,
+			"snapcompact.systemPrompt": "all",
+		});
+		const session = sessionWith({ prompt, settings });
+		const data = buildSessionContextView(session);
+		expect(data.breakdown.thresholdTokens).toBeGreaterThan(0);
+		expect(data.breakdown.snapcompact?.systemPrompt).toMatchObject({ applied: true, scope: "all" });
+		expect(data.breakdown.snapcompact?.savedTokens).toBeGreaterThan(0);
+		const plain = buildSessionContextView(sessionWith({ prompt }));
+		expect(plain.breakdown.snapcompact).toBeUndefined();
+		expect(data.estimatedTokens).toBe(plain.estimatedTokens);
+		expect(data.free + data.buffer + data.estimatedTokens).toBe(data.window);
+	});
+
 	it("previews actual static sources before the first message without reading skill or instruction files", async () => {
 		const built = await buildSystemPrompt({
 			cwd: import.meta.dir,

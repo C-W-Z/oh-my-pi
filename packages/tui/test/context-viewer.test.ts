@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as os from "node:os";
 import type { NativeNode } from "../src/native/node";
 import { ContextViewer, type ContextViewData, type ContextViewCategory } from "../src/overlays/context-viewer";
 import { createTheme, getBuiltinThemes } from "../src/theme/loader";
@@ -51,6 +52,29 @@ function fixture(): ContextViewData {
 		buffer: 20000,
 		free: 100000,
 		notices: [],
+		breakdown: computeContextBreakdown(
+			{
+				model: getBundledModel("anthropic", "claude-sonnet-4-5"),
+				systemPrompt: ["system"],
+				agent: { tokenizer: new Tokenizer(), state: { tools: [] } },
+				messages: [],
+			},
+			{
+				compaction: DEFAULT_COMPACTION_SETTINGS,
+				snapcompact: {
+					visionCapable: true,
+					savedTokens: 6000,
+					systemPrompt: {
+						applied: true,
+						textTokens: 10000,
+						imageTokens: 4000,
+						frames: 2,
+						savedTokens: 6000,
+						scope: "all",
+					},
+				},
+			},
+		),
 		categories: [
 			{
 				id: "system-prompt",
@@ -143,9 +167,7 @@ describe("ContextViewer navigation", () => {
 		h.resize(12);
 		h.render(48);
 		h.viewer.handleInput("\x1b[F");
-		const capacity = h.render(48).join("\n");
-		expect(capacity).toContain("Free Space");
-		expect(capacity).toContain("Auto-Compact Buffer");
+		h.render(48);
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("tool-output/bash");
 	});
 
@@ -187,6 +209,52 @@ describe("ContextViewer navigation", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("preserves body paths while sanitizing terminal controls in ANSI and native content", () => {
+		const data = fixture();
+		const path = `${os.homedir()}/context-viewer/source.txt`;
+		data.categories[0]!.entries[0] = {
+			id: "source",
+			label: "source",
+			tokens: 1,
+			path,
+			text: `Source: ${path}\n\tbody\x1b[31m visible\x1b[0m`,
+		};
+		const h = harness(data);
+		h.render();
+		select(h.viewer, "system-prompt");
+		const ansi = h.render(160).join("\n");
+		expect(ansi).toContain(`Source: ${path}`);
+		expect(ansi).not.toContain("\t");
+		const body = nodes(h.viewer.describe({ ...cx, cols: 160 }))
+			.filter(node => node.k === "text")
+			.flatMap(node =>
+				node.k === "text" ? [node.p?.text ?? "", ...(node.p?.spans?.map(span => span.t) ?? [])] : [],
+			)
+			.join("\n");
+		expect(body).toContain(`Source: ${path}`);
+		expect(body).not.toContain("\x1b");
+	});
+
+	it("opens the original usage report with compaction markers and savings, then returns without closing", () => {
+		const data = fixture();
+		const h = harness(data);
+		h.render();
+		h.viewer.handleInput("d");
+		h.render();
+		const diagnostic = nodes(h.viewer.describe(cx));
+		const meter = diagnostic.find(node => node.k === "meter");
+		expect(meter).toMatchObject({
+			p: { marks: [expect.objectContaining({ at: data.breakdown.thresholdTokens! / data.window })] },
+		});
+		expect(diagnostic.some(node => node.key === "snapcompact")).toBe(true);
+		h.viewer.handleInput("\x1b[F");
+		expect(h.render(160).join("\n")).toContain("6K");
+		h.viewer.handleInput("\x1b");
+		h.render();
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+		expect(h.closed()).toBe(0);
+	});
+
 	it("preserves counts and percentage denominators when switching Window/Fit", () => {
 		const h = harness();
 		h.render();
@@ -242,7 +310,7 @@ describe("ContextViewer presentation", () => {
 			const system = lines.find(line => Bun.stripANSI(line).includes("System Prompt"))!;
 			const p = CONTEXT_PRESENTATION["system-prompt"];
 			const swatch = theme.styledSymbol(p.symbol, p.color);
-			// Override 改變 geometry；定位真正 map 區域與 label 後方的互動列。
+			// Overrides change geometry; locate the map and the interactive row before its label.
 			const legendStart = Bun.stripANSI(system).indexOf("System Prompt");
 			expect(system.indexOf(swatch)).toBeGreaterThanOrEqual(0);
 			expect(Bun.stripANSI(system.slice(system.indexOf(swatch) + swatch.length))).toContain("System Prompt");

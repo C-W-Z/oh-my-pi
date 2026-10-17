@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a read-only interactive `/context` viewer for loaded prompts, instructions, skills, tools, conversation content, and tool output, including before the first message; press `d` for usage diagnostics, compaction thresholds, and estimated Snapcompact savings.
+
 ### Changed
 
 - With a first-party Anthropic model on the official API selected, the interactive UI opens the API connection at startup, on model switch, and when you start typing, so the next turn skips connection setup; third-party gateways and custom endpoints are never probed ([#16044](https://github.com/can1357/oh-my-pi/pull/16044) by [@H4vC](https://github.com/H4vC))

@@ -595,7 +595,7 @@ export interface BuildSystemPromptOptions {
 	subagent?: boolean;
 }
 
-/** 與 build blocks 一起提交的唯讀來源；不從有效 prompt 反向猜測結構。 */
+/** Read-only sources committed with the built blocks, without inferring structure from the effective prompt. */
 export interface SystemPromptSource {
 	readonly id: string;
 	readonly blockIndex: number;
@@ -614,7 +614,7 @@ export interface SystemPromptSources {
 export interface BuildSystemPromptResult {
 	/** Ordered system prompt blocks. Providers should preserve entries as distinct messages/blocks. */
 	systemPrompt: string[];
-	/** 此次 build 實際渲染的來源，僅適用於完全相同的 blocks。 */
+	/** Sources rendered by this build, valid only for identical blocks. */
 	sources?: SystemPromptSources;
 	/**
 	 * Names of `xd://` devices whose catalog/protocol section this prompt renders.

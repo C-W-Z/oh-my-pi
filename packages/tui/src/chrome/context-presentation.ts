@@ -1,7 +1,7 @@
 import type { ThemeColor } from "../theme";
 import type { SymbolKey } from "../theme/symbols";
 
-/** Map 與可互動 legend 的唯一分類視覺來源；glyph 於 render 時解析。 */
+/** Shared category styles for maps and interactive legends; resolve glyphs at render time. */
 const SYSTEM = { color: "accent", symbol: "context.content" } as const;
 const INSTRUCTIONS = { color: "customMessageLabel", symbol: "context.content" } as const;
 const TOOLS = { color: "warning", symbol: "context.content" } as const;

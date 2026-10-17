@@ -499,7 +499,7 @@ export class SessionTools {
 		return this.#baseSystemPrompt;
 	}
 
-	/** 來源與 base prompt 原子提交；沒有 metadata 的 setter 清除舊歸屬。 */
+	/** Commit sources atomically with the base prompt; setters without metadata clear prior attribution. */
 	setBaseSystemPrompt(prompt: string[], sources?: SystemPromptSources): void {
 		this.#baseSystemPrompt = prompt;
 		this.#systemPromptSources = sources;
@@ -2122,7 +2122,7 @@ export class SessionTools {
 					// that winning base, never replace it with the preparation's snapshot.
 					const currentBase = this.#baseSystemPrompt;
 					this.#host.captureMemoryPromotionSnapshot(currentBase);
-					// 僅附加 memory block；仍保留與原 blocks 對應的已提交來源。
+					// Appending a memory block preserves committed sources associated with the original blocks.
 					this.#baseSystemPrompt = currentBase === preparedBase ? stablePrompt : [...currentBase, injected];
 					this.#applyAgentSystemPrompt(this.#baseSystemPrompt);
 					return true;

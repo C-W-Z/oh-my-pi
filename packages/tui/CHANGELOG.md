@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added an ANSI and native Context Viewer with category navigation, full-content browsing, estimated capacity, and usage diagnostics; body paths stay intact, and large tool outputs are fully wrapped only when opened.
+
 ## [18.11.3] - 2026-10-16
 
 ### Added

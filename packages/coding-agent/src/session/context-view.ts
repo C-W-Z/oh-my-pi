@@ -22,7 +22,7 @@ const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["tool-output", "Tool Output"],
 ];
 
-/** 多媒體僅摘要，不保存 binary、signature 或 message 物件。 */
+/** Summarize media without retaining binary data, signatures, or message objects. */
 function contentText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -44,9 +44,9 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
-/** 開啟時一次取樣；不呼叫 session hooks、provider transforms 或檔案 I/O。 */
+/** Sample once on open without session hooks, provider transforms, or file I/O. */
 export function buildSessionContextView(session: AgentSession): ContextViewData {
-	const breakdown = computeSessionContextBreakdown(session);
+	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
 	const tokenizer = session.agent.tokenizer;
 	const categories: ContextViewCategory[] = CATEGORIES.map(([id, label]) => ({ id, label, tokens: 0, entries: [] }));
 	const byId = new Map(categories.map(category => [category.id, category]));
@@ -163,14 +163,14 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	for (const [messageIndex, original] of session.messages.entries()) {
 		const execution =
 			original.role === "bashExecution" ? "bash" : original.role === "pythonExecution" ? "python" : undefined;
-		// 只轉換本地 OMP 訊息；assistant 保留已保存的 blocks，避免 replay policy 隱去可讀內容。
+		// Convert local OMP messages only; preserve saved assistant blocks that replay policies may hide.
 		const messages: readonly Message[] =
 			original.role === "assistant" || original.role === "toolResult" ? [original] : convertToLlm([original]);
 		for (const [convertedIndex, message] of messages.entries()) {
 			const prefix = `${messageIndex}/${convertedIndex}`;
 			const info = `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`;
 			if (message.role === "assistant") {
-				// 整筆 reasoning replay 僅計一次；text/call 不承接 provider 的整回合 usage。
+				// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
 				const blockTokens = message.content.map(block => {
 					if (block.type === "text") return tokenizer.countTokens(block.text);
 					if (block.type === "toolCall") {
@@ -264,6 +264,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		estimatedTokens,
 		buffer,
 		free: Math.max(0, window - estimatedTokens - buffer),
+		breakdown,
 		categories,
 		notices,
 	};

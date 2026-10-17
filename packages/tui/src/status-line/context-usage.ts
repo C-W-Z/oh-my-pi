@@ -912,7 +912,7 @@ export function describeContextUsage(breakdown: ContextBreakdown): NativeNode {
 	});
 }
 
-/** 靜態 context 報表：ANSI grid／legend 與 native meter／glyph fallback 共用分類身份。 */
+/** Static context report with shared category styles across ANSI grids, legends, native meters, and glyph fallbacks. */
 export class ContextUsageView extends Container {
 	readonly #breakdown: ContextBreakdown;
 	readonly #theme: Theme;

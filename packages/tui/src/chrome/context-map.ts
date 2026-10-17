@@ -1,4 +1,4 @@
-/** 連續 token 區段的純占用計算；不依賴 theme 或 renderer。 */
+/** Pure occupancy calculations for contiguous token segments, independent of themes and renderers. */
 export interface ContextMapSegment<T> {
 	readonly id: T;
 	readonly tokens: number;
@@ -56,7 +56,7 @@ export function planContextMap<T>(
 	return cells;
 }
 
-/** Fit 使用兩位有效數字向上取整，百分比仍以真實 window 為分母。 */
+/** Round the fit scale up to two significant digits; percentages still use the actual context window. */
 export function contextFitScale(estimatedTokens: number, window: number): number {
 	if (!Number.isFinite(window) || window <= 0) return 0;
 	const desired = Math.max(10_000, Math.max(0, estimatedTokens) * 1.15);

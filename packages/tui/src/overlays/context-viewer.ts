@@ -22,6 +22,7 @@ import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
+import { type ContextBreakdown, ContextUsageView } from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
@@ -51,6 +52,7 @@ export interface ContextViewData {
 	readonly estimatedTokens: number;
 	readonly buffer: number;
 	readonly free: number;
+	readonly breakdown: ContextBreakdown;
 	readonly categories: readonly ContextViewCategory[];
 	readonly notices: readonly string[];
 }
@@ -70,7 +72,7 @@ interface EntryRange {
 	complete: boolean;
 }
 
-/** 唯讀 snapshot 的專屬導覽；所有輸入／native 操作共用同一狀態。 */
+/** Read-only snapshot navigation with shared state for keyboard and native interactions. */
 export class ContextViewer implements Component {
 	readonly nativeOverlay = { role: "omp.overlay.context", size: "lg", anchor: "center", head: "Context" } as const;
 	readonly #data: ContextViewData;
@@ -82,10 +84,12 @@ export class ContextViewer implements Component {
 	readonly #previewScroll = new ScrollView([], { height: 1 });
 	readonly #fullScroll = new ScrollView([], { height: 1 });
 	readonly #panel = new OverlayPanel("Context");
+	readonly #diagnostics: ContextUsageView;
+	readonly #diagnosticScroll: ScrollView;
 	readonly #header = new PanelRows();
 	readonly #body = new PanelRows();
 	readonly #footer = new PanelRows();
-	#state: "overview" | "category" | "entry" = "overview";
+	#state: "overview" | "category" | "entry" | "diagnostics" = "overview";
 	#category: ContextViewCategory | undefined;
 	#entries = new MenuSelection<ContextViewEntry>([], {
 		getKey: entry => entry.id,
@@ -116,6 +120,8 @@ export class ContextViewer implements Component {
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
 		this.#getRows = options.getRows;
+		this.#diagnostics = new ContextUsageView(data.breakdown, theme);
+		this.#diagnosticScroll = new ScrollView(this.#diagnostics, { height: 1 });
 		const rows: OverviewRow[] = [];
 		for (const category of data.categories) {
 			rows.push({ key: category.id, id: category.id, label: category.label, tokens: category.tokens, category });
@@ -130,8 +136,8 @@ export class ContextViewer implements Component {
 				});
 		}
 		rows.push(
-			{ key: "buffer", id: "buffer", label: "Auto-Compact Buffer", tokens: data.buffer },
-			{ key: "free", id: "free", label: "Free Space", tokens: data.free },
+			{ key: "buffer", id: "buffer", label: "Estimated Auto-Compact Buffer", tokens: data.buffer },
+			{ key: "free", id: "free", label: "Estimated Free Space", tokens: data.free },
 		);
 		this.#overview = new MenuSelection(rows, {
 			getKey: item => item.key,
@@ -151,6 +157,7 @@ export class ContextViewer implements Component {
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
 		this.#panel.invalidate();
+		this.#diagnosticScroll.invalidate();
 	}
 
 	dispose(): void {
@@ -161,16 +168,21 @@ export class ContextViewer implements Component {
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
 		this.#panel.dispose();
+		this.#diagnosticScroll.dispose();
 	}
 
 	#safe(value: string): string {
 		return shortenEmbeddedPaths(replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n"))));
 	}
 
+	#safeContent(value: string): string {
+		return replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n")));
+	}
+
 	#entryText(entry: ContextViewEntry): string {
 		let value = this.#safeEntries.get(entry.id);
 		if (value === undefined) {
-			value = this.#safe(entry.text);
+			value = this.#safeContent(entry.text);
 			this.#safeEntries.set(entry.id, value);
 		}
 		return value;
@@ -184,6 +196,15 @@ export class ContextViewer implements Component {
 			.flatMap(line => (line ? wrapTextWithAnsi(line, Math.max(1, width)) : [""]));
 		this.#wrapped.set(entry.id, { width, lines });
 		return lines;
+	}
+
+	/** Wrap only a bounded prefix for previews, deferring large output wrapping until the full entry opens. */
+	#entryPreview(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
+		const prefix = entry.text.slice(0, Math.max(1, width) * budget * 2);
+		const lines = this.#safeContent(prefix)
+			.split("\n")
+			.flatMap(line => (line ? wrapTextWithAnsi(line, Math.max(1, width)) : [""]));
+		return { lines: lines.slice(0, budget), complete: prefix.length === entry.text.length && lines.length <= budget };
 	}
 
 	#share(tokens: number): string {
@@ -318,11 +339,11 @@ export class ContextViewer implements Component {
 						width - 1,
 					),
 				);
-			const content = this.#entryLines(entry, Math.max(1, width - 3));
 			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
-			lines.push(...content.slice(0, budget).map(line => `  ${line}`));
-			if (content.length > budget) lines.push(theme.fg("dim", "  Enter to view full content"));
-			ranges.push({ start, end: lines.length, complete: content.length <= budget });
+			const content = this.#entryPreview(entry, Math.max(1, width - 3), budget);
+			lines.push(...content.lines.map(line => `  ${line}`));
+			if (!content.complete) lines.push(theme.fg("dim", "  Enter to view full content"));
+			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");
 		}
 		if (lines.length === 0) lines.push("No content in this category.");
@@ -367,6 +388,11 @@ export class ContextViewer implements Component {
 		}
 	}
 
+	#diagnosticLines(width: number, height: number): readonly string[] {
+		this.#diagnosticScroll.setHeight(height);
+		return this.#diagnosticScroll.render(width);
+	}
+
 	render(width: number): readonly string[] {
 		this.#width = Math.max(1, width - 4);
 		const terminalRows = Math.max(1, this.#getRows());
@@ -374,24 +400,29 @@ export class ContextViewer implements Component {
 		this.#panel.title =
 			this.#state === "overview"
 				? `Context · ${this.#fit ? "Fit" : "Window"}`
-				: this.#state === "category"
-					? this.#safe(this.#category!.label)
-					: this.#safe(this.#entry!.label);
+				: this.#state === "diagnostics"
+					? "Context · Usage diagnostics"
+					: this.#state === "category"
+						? this.#safe(this.#category!.label)
+						: this.#safe(this.#entry!.label);
 		this.#header.setLines(this.#summary().map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
 		const lines =
 			this.#state === "overview"
 				? this.#overviewLines(this.#width, this.#height)
-				: this.#state === "category"
-					? this.#previewLines(this.#width, this.#height)
-					: this.#fullLines(this.#width, this.#height);
+				: this.#state === "diagnostics"
+					? this.#diagnosticLines(this.#width, this.#height)
+					: this.#state === "category"
+						? this.#previewLines(this.#width, this.#height)
+						: this.#fullLines(this.#width, this.#height);
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
 		const zoom = this.#canZoom ? " · z Window/Fit" : "";
+		const diagnostics = this.#state === "overview" ? " · d Usage diagnostics" : "";
 		this.#footer.setLines([
 			truncateToWidth(
 				theme.fg(
 					"dim",
-					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}`,
+					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}${diagnostics}`,
 				),
 				this.#width,
 			),
@@ -433,11 +464,15 @@ export class ContextViewer implements Component {
 
 	#back(): void {
 		if (this.#state === "entry") this.#state = this.#entryParent;
-		else if (this.#state === "category") this.#state = "overview";
+		else if (this.#state === "category" || this.#state === "diagnostics") this.#state = "overview";
 		else this.#close();
 	}
 
 	#navigate(delta: number): void {
+		if (this.#state === "diagnostics") {
+			this.#diagnosticScroll.scroll(delta);
+			return;
+		}
 		if (this.#state === "entry") {
 			this.#fullScroll.scroll(delta);
 			return;
@@ -461,7 +496,7 @@ export class ContextViewer implements Component {
 		this.#entries.move(delta > 0 ? 1 : -1);
 	}
 
-	/** 只優先攔截確實處理的操作鍵；其他 modal 輸入由 focus 路徑吞掉。 */
+	/** Capture only handled navigation keys; the focus path consumes other modal input. */
 	capturesInput(data: string): boolean {
 		return (
 			matchesSelectCancel(data) ||
@@ -472,7 +507,8 @@ export class ContextViewer implements Component {
 			matchesSelectPageDown(data) ||
 			getKeybindings().matches(data, "tui.select.confirm") ||
 			(["home", "end", "enter", "j", "k"] as const).some(key => matchesKey(data, key)) ||
-			(data === "z" && this.#canZoom)
+			(data === "z" && this.#canZoom) ||
+			(data === "d" && this.#state === "overview")
 		);
 	}
 
@@ -495,15 +531,21 @@ export class ContextViewer implements Component {
 			by = "page-down";
 		} else if (matchesKey(data, "home") || matchesKey(data, "end")) {
 			const last = matchesKey(data, "end");
-			if (this.#state === "entry") {
-				if (last) this.#fullScroll.scrollToBottom();
-				else this.#fullScroll.scrollToTop();
+			if (this.#state === "entry" || this.#state === "diagnostics") {
+				const scroll = this.#state === "entry" ? this.#fullScroll : this.#diagnosticScroll;
+				if (last) scroll.scrollToBottom();
+				else scroll.scrollToTop();
 			} else if (this.#state === "overview") {
 				this.#overviewBoundary = last ? "last" : "first";
 				this.#overview.moveToBoundary(this.#overviewBoundary);
 			} else this.#entries.moveToBoundary(last ? "last" : "first");
 			by = last ? "end" : "start";
 		} else if (data === "z" && this.#canZoom) this.#fit = !this.#fit;
+		else if (data === "d" && this.#state === "overview") {
+			this.#state = "diagnostics";
+			this.#nativeScroll = { by: "start", n: this.#nativeScroll.n + 1 };
+			this.#diagnosticScroll.scrollToTop();
+		}
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
 		this.#requestRender();
 	}
@@ -512,7 +554,7 @@ export class ContextViewer implements Component {
 		this.#width = Math.max(1, cx.cols - 4);
 		this.#height = Math.max(1, this.#getRows() - 6);
 		const children: NativeNode[] = this.#summary().map(line => text([span(line, "dim")], { wrap: "word" }));
-		if (this.#state !== "overview")
+		if (this.#state === "entry" || this.#state === "category")
 			children.push(
 				text([span(this.#safe(this.#state === "category" ? this.#category!.label : this.#entry!.label), "strong")]),
 			);
@@ -554,6 +596,8 @@ export class ContextViewer implements Component {
 			} else children.push(list);
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
+		} else if (this.#state === "diagnostics") {
+			children.push({ ...this.#diagnostics.describe(cx), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
 			this.#previewLines(Math.max(1, cx.cols - 4), Math.max(1, this.#getRows() - 6));
 			const items = this.#entries.items.map(entry =>
@@ -561,9 +605,11 @@ export class ContextViewer implements Component {
 					"item",
 					{
 						label: this.#safe(entry.label),
-						detail: this.#entryLines(entry, Math.max(1, cx.cols - 8))
-							.slice(0, PREVIEW_LIMITS.OUTPUT_EXPANDED)
-							.join("\n"),
+						detail: this.#entryPreview(
+							entry,
+							Math.max(1, cx.cols - 8),
+							PREVIEW_LIMITS.OUTPUT_EXPANDED,
+						).lines.join("\n"),
 					},
 					undefined,
 					entry.id,
@@ -595,6 +641,7 @@ export class ContextViewer implements Component {
 			actionBar([
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
 				...(this.#canZoom ? [actionButton(this.#fit ? "Window" : "Fit", "zoom")] : []),
+				...(this.#state === "overview" ? [actionButton("Usage diagnostics", "diagnostics")] : []),
 				actionButton("Close", "close"),
 			]),
 		);
@@ -607,6 +654,7 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (event.act === "zoom") this.handleInput("z");
+			else if (event.act === "diagnostics") this.handleInput("d");
 		} else if (event.type === "select" || event.type === "activate") {
 			if (this.#state === "overview") {
 				const item = this.#overview.items.find(item => item.key === event.item);

@@ -6389,7 +6389,7 @@ export class AgentSession implements SettingsScope {
 		return this.agent.state.systemPrompt;
 	}
 
-	/** 已提交的 prompt build 來源；viewer 自行核對有效 blocks。 */
+	/** Committed prompt sources; the viewer verifies them against the effective blocks. */
 	get systemPromptSources() {
 		return this.#tools.systemPromptSources;
 	}

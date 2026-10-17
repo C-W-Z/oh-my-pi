@@ -322,7 +322,7 @@ export interface AgentSessionConfig {
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	/** System prompt builder that can consider tool availability. */
 	rebuildSystemPrompt?: (toolNames: string[], tools: Map<string, AgentTool>) => Promise<BuildSystemPromptResult>;
-	/** 初始 base prompt 的已提交來源。 */
+	/** Committed sources for the initial base prompt. */
 	systemPromptSources?: SystemPromptSources;
 	/** Tools mounted under `xd://`, for `/tools` display. */
 	getXdevToolEntries?: () => Array<{ name: string; summary: string }>;
