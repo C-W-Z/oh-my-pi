@@ -1,231 +1,116 @@
-以下內容可直接貼到新 session：
-
----
-
 # Context Viewer 工作交接
 
-## 目前狀態
+## 任務與狀態
 
-- Repo：`D:/omp/oh-my-pi`
-- Branch：`feat/context-viewer`
-- 最新本地 commit：`982e01e521`
-- Commit message：`fix(context): preserve diagnostics and improve content previews`
-- **已 commit，未 push，未建立或更新 PR。**
-- Commit 後未重新查詢工作區狀態；新 session 開始時先確認，不要直接假定 clean。
+- Repo：`D:/omp/oh-my-pi`；branch：`feat/context-viewer`。
+- 本文件更新前的 HEAD：`a16a069df4`（`docs: update HANDOFF.md`）；本次開工檢查工作區 clean。下個 session 仍須先檢查 Git 狀態。
+- 現有互動式全螢幕 `/context` 已實作；**下列改版方向已由使用者確認，交由下個 session 實作，不必重新詢問是否採用。**
+- 本 session 只更新交接文件，沒有修改 Viewer 程式碼；沒有建立 commit、push 或 PR。不要將以下需求當成已完成。
 
-這個分支已實作互動式全螢幕 `/context` Viewer。本次是在既有實作上核實 GPT 的 review 並修復問題，不是重新開發。
+## 已確認需求
 
-## 使用者目前關注的設計問題
+### 1. 原版容量統計 + 新版分類比例分攤
 
-目前總覽按 **`d`** 會在 Viewer 內打開原本的 `ContextUsageView`，Esc 返回新總覽。
+**決策：** Used／Buffer／Free Space 全部沿用原版統計；新版仍保留所有細分類及內容瀏覽，按本地估算比例分配原版 Used，供 map 與分類 legend 使用。不是退回原版五分類，也不是只保留文字列表。
 
-這是為了保留舊 `/context` 的診斷功能而採取的實作：
-- 原有 OMP usage 統計。
-- Compaction threshold／Native meter marker。
-- 設定啟用時的 Snapcompact estimated savings。
+計算契約：
 
-**使用者對這個額外頁面的必要性有疑問。** 上一個 session 已說明：
+```text
+U = breakdown.usedTokens
+B = breakdown.autoCompactBufferTokens
+F = breakdown.freeTokens
+W = breakdown.contextWindow
+e[i] = 新版第 i 個頂層分類的原始估算 tokens
+E = sum(e[i])，不重複計入 children 或 entries
 
-> 要保留的是舊診斷資訊，不一定要保留舊介面。兩張報表會迫使用者理解不同的計量口徑，交互不夠直觀。
-
-建議的方向是：
-1. 在新總覽直接補上 Compaction threshold、距離門檻的 token 數。
-2. 啟用 Snapcompact 時，顯示預估 savings／wire tokens。
-3. 保留 `OMP usage` 與 `Estimated content` 的區分。
-4. 移除獨立診斷頁、`d` 快捷鍵與對應 Native action。
-
-**這只是討論與建議，尚未獲得實作指示。** 使用者最後要求先 commit 當前結果；不要直接把建議當成已授權需求。
-
-## 待實作的 Viewer 視覺需求與方案
-
-**範圍：** 使用者要求記錄下列兩項需求並研究實作方式；本節是實作方案，不代表 UI 已修改。獨立診斷頁是否整合總覽仍屬另一項待確認決策，不與這兩項視覺修改綁定。
-
-### 1. 操作提示列上方增加分隔框線
-
-**需求：** Viewer 底部操作提示列要像 `/usage` 一樣有上邊框，與可捲動內容明確分開；總覽、分類預覽、全文與現存診斷頁都採用同一個 footer 結構。
-
-**現有依據：**
-- `packages/tui/src/overlays/usage-dashboard.ts` 的 `UsageDashboardComponent` 使用 `OverlayPanel`，在 body 與 footer 之間放入 `new PanelDivider()`。
-- `packages/tui/src/chrome/overlay-box.ts` 的 `PanelDivider` 由 `OverlayPanel` 畫成接合左右外框的水平線，不必自行拼接字元。
-- `packages/tui/src/overlays/context-viewer.ts` 目前只有 header、body、footer，尚未加入 divider。
-
-**建議實作：**
-1. 在 `ContextViewer` 匯入並插入既有 `PanelDivider`，放在 `#body` 與 `#footer` 之間；不要改共用元件的預設行為，以免影響其他 overlays。
-2. 固定 chrome 在正常尺寸下共 7 行：上框 1、summary 3、divider 1、提示 1、下框 1；body 高度由 `terminalRows - 6` 調整為 `terminalRows - 7`。
-3. 同步核對 `render()`、`describe()`、map geometry 與 category preview 的高度預算，避免 ANSI／Native 共用導航狀態卻用不同的 preview 行數。極矮視窗須明確分配 header/body 空間，不能只靠末尾 `.slice()` 把 footer 或下框截掉。
-4. Native 的 `describe()` 是自行組裝節點，不會自動沿用 `#panel` 的 children；在 `actionBar()` 前加入 `node("rule")`，明確描述相同分區。
-
-### 2. 分類預覽的選中條目改為整個區塊的彩色左邊框
-
-**需求：** Enter 進入多條目的分類預覽後，以連續彩色左邊框標示目前選中的整個 entry，不再只在標題前放箭頭。這是每個 entry 的內側 gutter，不是將整個 Viewer 外框染色。
-
-**參考依據：**
-- `../pi-context-view/src/ui/usage-view.ts` 的 `previewStreamLine()`／`blockGutter()` 使用兩欄 gutter；選中區塊每行畫 `theme.fg("accent", "┃ ")`，未選中區塊保留等寬縮排。
-- 參考實作以所屬 block 判斷每個可見行的選中狀態，因此標題捲出畫面後，正文仍有彩色左邊框。
-- 本 repo 的 `#preparePreview()` 已產生 `EntryRange { start, end, complete }`，`#previewLines()` 已能取得 scroll offset；不必引入參考專案的整套 navigator。
-
-**建議實作：**
-1. 重用 `EntryRange` 的半開區間 `[start, end)`；用 `scrollOffset + visibleRowIndex` 判斷可見行是否屬於選中 entry，取代目前只比對 `range.start` 的箭頭分支。
-2. 選中區塊的標題、metadata、正文、正文內空行與全文提示行均畫 accent 左框；未選中 entry 使用兩個空白，內容不因切換選中項而左右跳動。區塊之間的分隔空行在 range 外，不連接左框。
-3. 固定預留 gutter 的兩欄，先以剩餘寬度準備與 render `#previewScroll`，最後才為可見行加上 gutter。保留 `ScrollView` 的右側 scrollbar 欄位，wrap／truncate 也需預留該欄，不能在已佔滿寬度的行前直接加框再截斷。
-4. `#preparePreview()` 的初始化呼叫、cache 的 width、`revealRange()` 與後續 render 要使用一致的縮減後寬度，避免 Enter 初次開啟或 resize 時重算出不同的 ranges。
-5. cache 保留未加選中樣式的 preview 行與 ranges；只對可見行加框。選擇改變不應重新 wrap 全分類，更不能恢復對大型 Tool Output 全文 wrap 的舊做法。
-6. 保留既有 selection、先捲動 oversized entry 再切換條目、Enter／Esc 與返回位置規則；單條目分類直接進全文的行為不變。使用 theme `accent` 表示 focus，不額外引入 category 配色規則。
-
-**Native 邊界：**
-- 現在使用 `selectList("entries", …)` 的 `selected` 與 `item.detail`，視覺由 Tern 繪製；ANSI gutter 的修改不會自動反映到 Native。
-- `packages/wire/src/tsp.ts` 的 common／list／item props 沒有專用的左邊框屬性，不能假造 `borderLeft` 欄位，也不能把 `tone: "accent"` 當成整塊左框已完成的證據。
-- 實作時保留既有 select／activate 事件與 entry id，先在實際 Tern 視窗確認 multiline item 的選中外觀；若未提供整塊左框，須另行釐清 Tern renderer 所需變更，不能只靠節點測試宣稱兩端視覺一致。本方案尚未驗證 Tern 視覺。
-
-### 驗收與目前方案驗證
-
-後續 UI 實作的驗收：
-- 四種 Viewer 狀態都有 footer 上分隔線；48×18 resize 後，提示列、下框與內容可操作且不超出寬高。
-- 選中 entry 的 metadata、多行正文、內部空行與截斷提示均有連續左框；切換 entry 不左右跳動，分隔空行及鄰近 entry 不被誤標。
-- 選中 entry 標題捲出 viewport 時，其餘可見正文仍有左框；第一筆、最後一筆、空分類、單條目直開全文及 Esc 返回位置維持原有語意。
-- 窄視窗、寬字元、長行與右側 scrollbar 共存時不裁掉正文尾字；大型輸出仍只做有界預覽，全文尾部仍可到達。
-- ANSI 用實際 CLI／PTY 驗收；Native 需實際 Tern 視覺驗收。更新既有 behavior coverage，針對 footer 邊界與區塊選中範圍補必要 regression coverage，不測 source text 或固定提示文案。
-- 實作落地時更新 `packages/tui/CHANGELOG.md` 的英文 user-facing entry；不因單純記錄方案就聲稱功能已完成。
-
-目前只做過無落盤的 Bun 組合 probe：使用既有 `OverlayPanel`、`PanelDivider`、`PanelRows`、`ScrollView`，以兩欄 gutter 與 7 行固定 chrome 產生 48×18 畫面，觀察到 6 行連續左框及 footer 分隔線；輸出為 `rows: 18`、`maxWidth: 48`、`gutterRows: 6`。這只證明元件組合與基本尺寸預算可行，沒有修改 `ContextViewer`，不代表真實導航、resize、scrollbar 或 Tern 已驗收；未新增測試或臨時檔案。
-
-## 已完成的修復
-
-### 1. 保留舊診斷資訊
-
-`packages/coding-agent/src/session/context-view.ts`
-
-- `buildSessionContextView()` 現在呼叫：
-  ```ts
-  computeSessionContextBreakdown(session, { snapcompactSavings: true })
-  ```
-- 將 `breakdown` 放進 snapshot。
-
-`packages/tui/src/overlays/context-viewer.ts`
-
-- `ContextViewData` 增加 `breakdown: ContextBreakdown`。
-- 新增 `diagnostics` 狀態。
-- 使用既有 `ContextUsageView` 與 `ScrollView` 呈現診斷頁。
-- ANSI 用 `d` 開啟；Native 有 `Usage diagnostics` action。
-- Esc 返回總覽。
-
-如果後續改成整合總覽，注意：
-- 不要再丟失 Snapcompact 或 Compaction 資訊。
-- **不要刪掉共用的 `ContextUsageView`**；它仍有其他用途。
-- Snapshot 是開啟時取樣，瀏覽期間不會重新讀取 session。
-
-### 2. 正文保留完整路徑
-
-原先 `#safe()` 會呼叫 `shortenEmbeddedPaths()`，導致正文中的 home 路徑被改寫成 `~`。
-
-目前：
-- `#safeContent()` 用於正文，只處理終端安全、tabs 與換行。
-- 正文不再縮短路徑。
-- Metadata／label 的路徑仍可縮短。
-- ANSI 和 Native 均有 regression coverage。
-
-不要為了遵循一般 TUI 路徑縮短慣例，又把正文路徑改寫回去。
-
-### 3. 容量估算標示
-
-Viewer 的細分類總量與既有 OMP usage 不保證相同，沒有強行縮放數字。
-
-目前仍是：
-```ts
-buffer = min(existingBuffer, max(0, window - estimatedTokens))
-free = max(0, window - estimatedTokens - buffer)
+分類分攤量 a[i] = U * e[i] / E
+分類佔整個 context window 的比例 = a[i] / W
+分類佔 Used 的比例 = e[i] / E
 ```
 
-容量列已改成：
-- `Estimated Auto-Compact Buffer`
-- `Estimated Free Space`
+- Map 使用 `a[i]`、原版 B、原版 F；不要再用 E 重算 Free Space，或用 E 限縮 Buffer。
+- 分攤總和須等於 U；取整建議 largest remainder，餘數相同時依既有分類順序，避免畫面抖動。
+- 子分類只分配所屬父分類的預算；不要把 Tool Output 的 per-tool children 又加進總量。Map／legend／子分類顯示口徑須一致。
+- 保留 raw estimates 與正文，不要覆寫成分攤值而失去估算依據或重複套用縮放。
+- UI 清楚標示「分類佔比為估算分配」，不是各類實測值；只保留一套 Free Space／Buffer，不再並列 `Estimated Free Space`／`Estimated Auto-Compact Buffer`。
+- 這是假設誤差按各類大小同比例分攤，不代表能精確歸因 thinking、圖片或 provider overhead。
+- 處理 E=0、U=0、W=0：不得除零、NaN 或憑空造出分類比例；無法分攤時明示估算不可用並保留原版總量。原版 Used 超過 window 時保留超額資訊，不可為湊成 100% 而改寫 U。
+- Window/Fit、zoom 是否可用及 map 分母一併改用相同容量口徑，不能仍拿 E 判斷。Fit 僅縮放視圖，百分比仍以 W 為分母；不要把 Fit 視圖內的剩餘部分當成完整 window 的 F。
 
-原 OMP 統計仍在診斷頁。後續整合 UI 時，必須保留兩種口徑的清楚區分。
+**準確度與名詞，避免再次誤解：**
+- 原版總 Used 有可用的 provider usage anchor 時，以它為基準加上本地估算的變動／新增內容；無 anchor 時仍是本地估算，不是下一次 request 的精確值。
+- **Messages 不是獨立量到的實際值，不能以它作校準基準。** 原版 Messages 是總 Used 扣除其餘四類估算後的餘額。
+- Buffer 是策略預留容量，不是另一項 tokenizer 實測；原版 Free Space 已扣除 Buffer。
 
-### 4. 大型 Tool Output 預覽效能
-
-原本分類預覽會全文 wrap 每筆 entry，再只取前幾行。
-
-目前：
-- `#entryPreview()` 只處理有界前綴。
-- 開啟全文才完整 wrap。
-- ANSI 與 Native preview 都使用有界預覽。
-- 全文未被永久截斷，尾部仍可到達。
-
-單次本機 probe：約 6 MB 多行輸出，分類預覽從約 **558 ms** 降到約 **6 ms**。這不是通用 benchmark 保證。
-另驗證了約 6 MB 的超長單行輸出，全文尾部可到達。
-
-### 5. 提交範圍與文字
-
-- 已移除過時的根目錄 `PLAN.md`。
-- 已補：
-  - `packages/coding-agent/CHANGELOG.md`
-  - `packages/tui/CHANGELOG.md`
-- 本 feature 新增的 comments/docstrings 已改成英文，包括來源追蹤與測試註解。
-- 測試中的 `"寬寬"` 等中文 fixture 是字寬測試資料，刻意保留。
-
-**語言注意：** 雖然本地 context 預設要求中文 comments/docs，但使用者已在這次任務明確要求 **Changelog 和 code comments 使用英文**。後續相關修改沿用這個要求；聊天仍用中文。
-
-## 主要檔案
-
-| 路徑 | 用途 |
+| 原版分類 | 含義／新版對應 |
 |---|---|
-| `packages/coding-agent/src/session/context-view.ts` | 組裝唯讀 snapshot、來源歸屬、內容分類與估算 |
-| `packages/tui/src/overlays/context-viewer.ts` | ANSI／Native Viewer、導航、預覽、全文與診斷頁 |
-| `packages/tui/src/status-line/context-usage.ts` | 原有 context 統計與診斷呈現 |
-| `packages/coding-agent/src/session/context-usage-runtime.ts` | Session policy、Compaction 與可選 Snapcompact 估算 |
-| `packages/tui/src/chrome/context-map.ts` | Token map 與 Fit scale |
-| `packages/tui/src/chrome/context-presentation.ts` | Map／legend 共用分類視覺 |
-| `packages/coding-agent/test/modes/context-view.test.ts` | Snapshot 與真實 Snapcompact planner coverage |
-| `packages/tui/test/context-viewer.test.ts` | 導航、路徑、安全處理、診斷與 responsive coverage |
-| `packages/coding-agent/test/issue-4806-command-output.test.ts` | 正式入口、focus、草稿及背景 turn 隔離 |
+| System prompt | 第一個 system prompt block 扣除 Skills 估算；主要對應新版 System Prompt，但切法不完全相同 |
+| System tools | 模型可用工具的定義／schema 等；對應 Built-in Tools + Custom Tools，不是呼叫或執行結果 |
+| System context | 其餘 system prompt blocks；包含附加 guidance、專案 context 等，新版拆入 Instruction Files 及剩餘 System Prompt |
+| Skills | skill 目錄／描述估算，非所有 skill 文件全文；主要對應新版 Skills |
+| Messages | 新版 User Messages、Assistant Messages、Assistant Thinking、Tool Calls、Tool Output |
 
-既有 feature 還包含 System Prompt 來源追蹤，涉及 `system-prompt.ts`、`session-tools.ts`、`agent-session.ts` 等。來源與 prompt 的原子提交、rollback、失敗 rebuild 行為已有測試；不要順手簡化掉。
+實作入口：
+- `packages/coding-agent/src/session/session-stats.ts`：`getContextBreakdown()`、`#anchoredUsedTokens()`；原版 Used 的 provider anchor／增量計算。
+- `packages/tui/src/status-line/context-usage.ts`：`computeNonMessageBreakdown()`、`computeContextBreakdown()`；原版分類、Buffer、Free、threshold。
+- `packages/coding-agent/src/session/context-view.ts`：組裝 snapshot；目前 `usage = breakdown.usedTokens`，但 map 使用的細分類總量是 E，`buffer = min(原版 B, max(0, W - E))`、`free = max(0, W - E - buffer)`，**這兩項是待替換的現況，不是目標算法**。
+- `packages/tui/src/overlays/context-viewer.ts`：`#legendLine()`、`#mapCells()`、`#canZoom`、`describe()`；ANSI／Native 必須使用一致的分攤結果。
+- `packages/tui/src/chrome/context-map.ts`：`planContextMap()`、`contextFitScale()`；沿用共用繪圖能力，不另建第二套 map。
 
-## 已執行的驗證
+### 2. 診斷資訊整合總覽，移除舊頁面切換
 
-### 自動檢查
+- 新總覽直接呈現原版 Used／Buffer／Free、Compaction threshold 與距離門檻的 tokens；Compaction 關閉或已越過門檻時須如實呈現。
+- 啟用 Snapcompact 時保留 estimated savings／wire tokens、相關 prompt／tool-result 資訊及 inactive 原因；原有 wire tokens 為 `max(0, U - savedTokens)`，仍是估算，不稱為實測。
+- 移除 Viewer 內的 `diagnostics` 頁面、`d` 快捷鍵、`Usage diagnostics` Native action 及不再需要的狀態／scroll。**不可刪除共用 `ContextUsageView`，它另有用途。**
+- 現有 snapshot 已含 `breakdown`，由 `computeSessionContextBreakdown(session, { snapcompactSavings: true })` 取得；優先重用，不重新讀取使用者資料或另算一份診斷。
 
-- 12 個相關測試檔案：**121 pass，0 fail**。
-- 最後只翻譯 comments 後，重跑：
-  ```text
-  bun test packages/tui/test/context-viewer.test.ts packages/tui/test/context-map.test.ts packages/coding-agent/test/modes/context-view.test.ts
-  ```
-  結果：**23 pass，0 fail**。
-- 分別在 `packages/tui`、`packages/coding-agent` 執行 `bun check`，均通過。
-- 未宣稱整個 monorepo 全部測試或 CI 通過。
+### 3. Footer 提示列增加上分隔框線
 
-### 已知無關測試失敗
+- 比照 `/usage`：在 Viewer 的 body 與 footer 之間加入既有 `PanelDivider`，不改共用元件預設行為。
+- 參考 `packages/tui/src/overlays/usage-dashboard.ts`；元件位於 `packages/tui/src/chrome/overlay-box.ts`。
+- 高度按實際 summary 行數計算；若 summary 仍為 3 行，固定 chrome 共 7 行，body 為 `terminalRows - 7`。診斷整合可能增加 summary，不能盲目固定此數。
+- 同步 ANSI／Native、map、preview 的尺寸預算；極矮畫面須收縮 header/body，不可靠末尾 `.slice()` 截掉 footer／下框。
+- Native `describe()` 自行組裝節點，不會沿用 `#panel` children；在 `actionBar()` 前加入 `node("rule")`。總覽、分類預覽、全文共用分隔結構。
 
-`packages/tui/test/usage-native-describe.test.ts:452`
+### 4. 分類預覽以整個 entry 的彩色左邊框標示選中
 
-時間格式測試預期英文 `pm`，本機 locale 輸出「下午」，導致失敗。沒有修改該測試或 locale，也不要為了本 feature 順手修它。
+- 參考 `../pi-context-view/src/ui/usage-view.ts` 的 `previewStreamLine()`／`blockGutter()`；兩欄 gutter，選中區塊畫 accent `┃ `，未選中保留等寬空白，取代只在首行放箭頭。
+- 使用既有 `EntryRange [start, end)` 與 `scrollOffset + visibleRowIndex`，涵蓋標題、metadata、正文、正文內空行與全文提示；entry 間的分隔空行在 range 外。標題捲出畫面後，可見正文仍有左框。
+- 先扣 gutter 寬度再準備／render `#previewScroll`，保留右側 scrollbar 欄位；初始化、cache width、`revealRange()`、resize 的寬度須一致，不能加框後才裁掉正文尾字。
+- Cache 保留未加選中樣式的行，只為可見行加框；不要為切換 selection 重 wrap 整類，更不能恢復對大型輸出全文 wrap 的做法。
+- 保留先捲動 oversized entry 再切換條目、Enter／Esc、返回位置、空分類及單條目直開全文語意。不改成全 Viewer 外框染色，不引入 category focus 配色。
+- Native 現在使用 `selectList("entries", …)` 的 `selected`／`item.detail`，由 Tern 繪製；TSP common／list／item 無專用 `borderLeft`。不得假造欄位，也不能以 `tone: "accent"` 或節點測試代替視覺驗收。保留 entry id 與 select／activate 事件；實際 Tern 若不支援整塊左框，須釐清 renderer 變更，明確報告限制。
 
-### 實際 CLI／UI smoke
+## 必須保留的既有行為
 
-使用 Windows 原生 `PtySession.startArgv()` 啟動正式 CLI，搭配既有 `VirtualTerminal` 觀察畫面，確認：
-- 全新空 Session 可開 `/context`。
-- System Prompt、Instruction Files、Skills、active `read` tool 內容可查看。
-- `d` 開診斷頁，Esc 返回。
-- Resize 到 48×18 後仍可操作。
-- 分層 Esc 最後關閉 Viewer，恢復 composer。
-- 大型多行及超長單行輸出的全文尾部可到達。
+- 唯讀 snapshot：開啟時取樣，重新開啟才更新；瀏覽不影響背景 turn、focus、composer 草稿。
+- 正文經 `#safeContent()` 處理終端安全、tabs／換行，**完整保留原始路徑**；metadata／label 可縮短路徑，不可把正文 home 路徑改成 `~`。
+- `#entryPreview()` 只處理有界前綴；開全文才完整 wrap。大型多行與超長單行的尾部必須可到達。
+- System Prompt 來源追蹤與 prompt 原子提交／rollback、失敗 rebuild 已有 coverage，勿順手簡化。涉及 `system-prompt.ts`、`session-tools.ts`、`agent-session.ts`。
+- 使用者要求本 feature 的 **code comments／Changelog 用英文**；聊天與本交接文件用中文，字寬測試的中文 fixture 保留。
 
-**未做 Tern 原生窗口的視覺驗證。** Native 有節點／事件測試，不能說已在 Tern 親自驗收。
+## 實作驗收
 
-臨時 smoke scripts 與臨時資料已清除，沒有提交。
+- 分攤守恆、零值／無估算／超額、父子不重複計量、整數餘數與 Window/Fit 口徑；分類標示為估算分配，原版 U／B／F 不被修改。
+- 總覽保留 Compaction 與 Snapcompact 必要資訊；舊診斷入口完全移除，共用 `ContextUsageView` 不受影響。
+- Footer 上框與下框在 resize 後可見；48×18、極矮畫面、寬字元、長行及 scrollbar 共存時不溢出／裁字。
+- 選中 entry 全區塊左框、標題捲出後仍有框、切換不左右跳動、不誤標鄰項；Enter／Esc 返回位置不變。
+- 用真正 CLI／PTY 操作新總覽、分類、全文、resize、關閉回 composer；Native 需 Tern 實際視覺驗收，未驗證就明說。元件組合 probe 不能算完整驗收。
+- 更新既有 contract coverage；新增測試只保護分攤邊界、導航或可見布局 regression，不測 source text／固定提示文案。
+- 更新受影響 package 的英文 `[Unreleased]` Changelog；已有 `packages/coding-agent/CHANGELOG.md`、`packages/tui/CHANGELOG.md`，不要宣稱尚未實作的功能已完成。
 
-### Windows 驗證注意事項
+相關測試：
+- `packages/tui/test/context-viewer.test.ts`：導航、正文路徑／安全、診斷、responsive；診斷測試須改成整合後的行為契約。
+- `packages/tui/test/context-map.test.ts`：map／Fit。
+- `packages/coding-agent/test/modes/context-view.test.ts`：snapshot、來源、真實 Snapcompact planner。
+- `packages/coding-agent/test/issue-4806-command-output.test.ts`：正式入口、focus、草稿、背景 turn 隔離。
 
-- `xd://tui` 啟動失敗，因環境沒有 `/bin/sh`。
-- 本 session 的 `bash` 工具即使設定 `pty: true`，CLI 仍判斷 stdin 非 TTY。
-- 可行路徑是 repo 的 `@oh-my-pi/pi-natives` → `PtySession.startArgv()`。
-- 新建隔離 agent dir 會進 onboarding；當時只在臨時 config 設 `setupVersion: 999` 跳過，未修改使用者設定。
-- ConPTY 已處理 terminal 回覆，當時不要再把 `VirtualTerminal` 的 CPR replies 回送 PTY，否則會有字元混入 composer。
+## 驗證環境與限制
 
-## 後續操作約束
-
-- 使用者尚未授權 push、PR 或 Discord 發文。
-- `CONTRIBUTING.md:19–26` 確實要求大型 UI／跨 package 功能事前在 Discord 討論；程式完成不代表 maintainer 已接受方向。
-- 不要自動重構整個 feature。
-- 若使用者確認要整合診斷資訊，再針對總覽布局與資料欄位做最小修改，同時更新 ANSI、Native、測試及英文 Changelog。
+- 現有版本有相關測試及 package-local `bun check` 通過紀錄；**新方案尚未實作或驗收，不可沿用舊結果宣稱通過。** 本次文件更新未重跑程式測試。
+- 已知無關失敗：`packages/tui/test/usage-native-describe.test.ts:452` 預期英文 `pm`，本機 locale 輸出「下午」。勿為本 feature 修 locale 或該測試。
+- Windows 下 `xd://tui` 缺 `/bin/sh`；本 session 的 bash `pty: true` 仍被 CLI 判為非 TTY。
+- 可行路徑為 `@oh-my-pi/pi-natives` 的 `PtySession.startArgv()` 啟動正式 CLI，配合既有 `VirtualTerminal` 觀察畫面。
+- 隔離臨時 agent dir 會進 onboarding；可僅在臨時 config 設 `setupVersion: 999`，不改使用者設定。ConPTY 已處理 terminal 回覆，勿再回送 VirtualTerminal CPR replies，以免字元混入 composer。
+- 尚無 Tern 原生窗口的視覺驗收；不能把 Native 節點／事件 coverage 當成已驗收。
+- 未授權 push、PR、Discord 發文或其他外部操作；不要擴大重構範圍。`CONTRIBUTING.md:19–26` 有大型 UI／跨 package 功能事前討論要求，程式完成不代表 maintainer 已接受方向。
