@@ -52,7 +52,7 @@ import {
 	PERMISSION_REQUIRED_TOOLS,
 } from "./acp-permission-gate";
 import type { ClientBridge, ClientBridgePermissionOutcome } from "./client-bridge";
-import { toolReadsSkillUris } from "../system-prompt";
+import { type BuildSystemPromptResult, type SystemPromptSources, toolReadsSkillUris } from "../system-prompt";
 
 import type { CustomMessage } from "./messages";
 import type { SessionEntry } from "./session-entries";
@@ -125,14 +125,12 @@ interface SessionToolsOptions {
 	 * registry; `isBuiltIn` reports this session's built-in provenance.
 	 */
 	reconcileSettingsGatedTools?: (isBuiltIn: (name: string) => boolean) => Promise<SettingsGatedToolDelta>;
-	rebuildSystemPrompt?: (
-		toolNames: string[],
-		tools: Map<string, AgentTool>,
-	) => Promise<{ systemPrompt: string[]; xdevCatalogNames?: readonly string[] }>;
+	rebuildSystemPrompt?: (toolNames: string[], tools: Map<string, AgentTool>) => Promise<BuildSystemPromptResult>;
 	getMcpServerInstructions?: () => Map<string, string> | undefined;
 	xdev?: XdevState;
 	setActiveToolNames?: (names: Iterable<string>) => void;
 	baseSystemPrompt: string[];
+	systemPromptSources?: SystemPromptSources;
 	skills?: Skill[];
 	skillWarnings?: SkillWarning[];
 	skillsSettings?: SkillsSettings;
@@ -352,6 +350,7 @@ export class SessionTools {
 	#presentationPinnedToolNames: ReadonlySet<string> | undefined;
 	#runtimeSelectedToolNames: ReadonlySet<string> | undefined;
 	#baseSystemPrompt: string[];
+	#systemPromptSources: SystemPromptSources | undefined;
 	/**
 	 * Per-turn system prompt returned by a `before_agent_start` extension hook
 	 * ("replace the system prompt for this turn"). While set, base-prompt
@@ -467,6 +466,7 @@ export class SessionTools {
 		if (this.#xdev) this.#xdev.decorateExecution = tool => this.#wrapToolForAcpPermission(tool);
 		this.#setActiveToolNames = options.setActiveToolNames;
 		this.#baseSystemPrompt = options.baseSystemPrompt;
+		this.#systemPromptSources = options.systemPromptSources;
 		const restoredReply = this.#latestReply();
 		const restoredPromptDigest = restoredReply && this.recordedPromptDigest();
 		this.#restoredTranscript =
@@ -499,9 +499,14 @@ export class SessionTools {
 		return this.#baseSystemPrompt;
 	}
 
-	/** Replaces the controller-owned base prompt without applying it to the agent. */
-	setBaseSystemPrompt(prompt: string[]): void {
+	/** 來源與 base prompt 原子提交；沒有 metadata 的 setter 清除舊歸屬。 */
+	setBaseSystemPrompt(prompt: string[], sources?: SystemPromptSources): void {
 		this.#baseSystemPrompt = prompt;
+		this.#systemPromptSources = sources;
+	}
+
+	get systemPromptSources(): SystemPromptSources | undefined {
+		return this.#systemPromptSources;
 	}
 
 	/**
@@ -1129,6 +1134,7 @@ export class SessionTools {
 		this.#setActiveToolNames?.(validToolNames);
 
 		let rebuiltSystemPrompt: string[] | undefined;
+		let rebuiltSources: SystemPromptSources | undefined;
 		let rebuiltSignature: string | undefined;
 		let frozenSignature: string | undefined;
 		// Trigger of an implicit (non-forced) rebuild, rechecked at commit.
@@ -1179,6 +1185,7 @@ export class SessionTools {
 						),
 					);
 					rebuiltSystemPrompt = built.systemPrompt;
+					rebuiltSources = built.sources;
 					if (!forcePromptRefresh) implicitRebuildSignature = triggerSignature;
 					rebuiltSignature = signature;
 					rebuiltXdevCatalogNames = built.xdevCatalogNames;
@@ -1231,6 +1238,7 @@ export class SessionTools {
 					this.#host.clearInheritedProviderPromptCacheKey();
 				}
 				this.#baseSystemPrompt = rebuiltSystemPrompt;
+				this.#systemPromptSources = rebuiltSources;
 				this.#host.clearMemoryPromotionSnapshot();
 				this.#applyAgentSystemPrompt(this.#baseSystemPrompt);
 				invalidateToolSchemaMetadata(this.#host.agent.state.tools);
@@ -2046,6 +2054,7 @@ export class SessionTools {
 				// snapshot, so only carry the prompt forward.
 				if (this.#baseSystemPrompt !== previousBaseSystemPrompt) return true;
 				this.#baseSystemPrompt = built.systemPrompt;
+				this.#systemPromptSources = built.sources;
 				this.#promptSurface = candidate;
 				this.#setBasePromptXdevNames(built.xdevCatalogNames);
 				this.#host.clearMemoryPromotionSnapshot();
@@ -2113,6 +2122,7 @@ export class SessionTools {
 					// that winning base, never replace it with the preparation's snapshot.
 					const currentBase = this.#baseSystemPrompt;
 					this.#host.captureMemoryPromotionSnapshot(currentBase);
+					// 僅附加 memory block；仍保留與原 blocks 對應的已提交來源。
 					this.#baseSystemPrompt = currentBase === preparedBase ? stablePrompt : [...currentBase, injected];
 					this.#applyAgentSystemPrompt(this.#baseSystemPrompt);
 					return true;

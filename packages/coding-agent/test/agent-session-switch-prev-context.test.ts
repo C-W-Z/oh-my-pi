@@ -9,6 +9,7 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import type { BuildSessionContextOptions, SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { buildSessionContextView } from "@oh-my-pi/pi-coding-agent/session/context-view";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 /**
@@ -277,6 +278,48 @@ describe("AgentSession.switchSession previous-context build", () => {
 		expect(sessionManager.getCwd()).toBe(sourceDir.path());
 		expect(session.isDisposed).toBe(true);
 	});
+	it("restores prompt attribution when a switch hook rebuilds the target prompt and then fails", async () => {
+		const tempDir = TempDir.createSync("@pi-switch-context-sources-");
+		tempDirs.push(tempDir);
+		const manager = SessionManager.create(tempDir.path(), tempDir.path());
+		const target = SessionManager.create(tempDir.path(), tempDir.path());
+		target.appendMessage({ role: "user", content: "target", timestamp: 1 });
+		await target.ensureOnDisk();
+		await target.flush();
+		const targetFile = target.getSessionFile()!;
+		await target.close();
+		const built = (fragment: string) => ({
+			systemPrompt: [fragment],
+			sources: {
+				blocks: [fragment],
+				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files" as const, label: "rules", fragment }],
+			},
+		});
+		const initial = built("previous rules");
+		const session = new AgentSession({
+			agent: new Agent({ initialState: { model, systemPrompt: initial.systemPrompt, tools: [] } }),
+			sessionManager: manager,
+			settings: Settings.isolated({ "compaction.enabled": false }),
+			modelRegistry,
+			systemPromptSources: initial.sources,
+			rebuildSystemPrompt: async () => built("target rules"),
+			extensionRunner: {
+				hasHandlers: () => false,
+				emit: async (event: { type: string }) => {
+					if (event.type === "session_switch") {
+						await session.refreshBaseSystemPrompt();
+						throw new Error("target hook failed");
+					}
+				},
+			} as unknown as ExtensionRunner,
+		});
+		sessions.push(session);
+		await expect(session.switchSession(targetFile)).rejects.toThrow("target hook failed");
+		expect(session.systemPrompt).toEqual(["previous rules"]);
+		const files = buildSessionContextView(session).categories.find(category => category.id === "instruction-files");
+		expect(files?.entries.map(entry => entry.text)).toEqual(["previous rules"]);
+	});
+
 	it("rejects reload when the session-before-switch hook cancels", async () => {
 		const tempDir = TempDir.createSync("@pi-switch-reload-cancel-");
 		tempDirs.push(tempDir);

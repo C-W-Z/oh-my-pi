@@ -11,6 +11,10 @@ import { Text } from "../components/text";
 import type { TspSpan, TspText } from "@oh-my-pi/pi-wire";
 import type { DescribeContext, NativeNode } from "../native/node";
 import { col, node, row, span, text } from "../native/describe";
+import { planContextMap } from "../chrome/context-map";
+import { CONTEXT_PRESENTATION } from "../chrome/context-presentation";
+import { activeThemeSymbol } from "../theme/active-symbols";
+import { theme as activeTheme } from "../theme/theme";
 
 interface ContextSkill {
 	readonly name: string;
@@ -72,13 +76,7 @@ export interface ContextUsageOptions {
 
 const GRID_COLS = 20;
 const GRID_ROWS = 10;
-const GRID_CELLS = GRID_COLS * GRID_ROWS;
 const GRID_GUTTER = "   ";
-
-const CELL_FILLED = "⛁";
-const CELL_FILLED_MESSAGES = "⛃";
-const CELL_FREE = "⛶";
-const CELL_BUFFER = "⛝";
 
 type CategoryId = "systemPrompt" | "systemContext" | "systemTools" | "skills" | "messages";
 
@@ -86,7 +84,7 @@ interface CategoryInfo {
 	id: CategoryId;
 	label: string;
 	tokens: number;
-	color: "accent" | "warning" | "success" | "userMessageText" | "customMessageLabel";
+	color: ThemeColor;
 	glyph: string;
 }
 
@@ -451,25 +449,23 @@ export function computeContextBreakdown(session: ContextUsageSession, options: C
 		usedTokens = skillsTokens + toolsTokens + systemContextTokens + systemPromptTokens + messagesTokens;
 	}
 
-	const categories: CategoryInfo[] = [
-		{ id: "systemPrompt", label: "System prompt", tokens: systemPromptTokens, color: "accent", glyph: CELL_FILLED },
-		{ id: "systemTools", label: "System tools", tokens: toolsTokens, color: "warning", glyph: CELL_FILLED },
-		{
-			id: "systemContext",
-			label: "System context",
-			tokens: systemContextTokens,
-			color: "customMessageLabel",
-			glyph: CELL_FILLED,
+	const categories: CategoryInfo[] = (
+		[
+			["systemPrompt", "System prompt", systemPromptTokens],
+			["systemTools", "System tools", toolsTokens],
+			["systemContext", "System context", systemContextTokens],
+			["skills", "Skills", skillsTokens],
+			["messages", "Messages", messagesTokens],
+		] satisfies [CategoryId, string, number][]
+	).map(([id, label, tokens]) => ({
+		id,
+		label,
+		tokens,
+		color: CONTEXT_PRESENTATION[id].color,
+		get glyph() {
+			return activeThemeSymbol(CONTEXT_PRESENTATION[id].symbol);
 		},
-		{ id: "skills", label: "Skills", tokens: skillsTokens, color: "success", glyph: CELL_FILLED },
-		{
-			id: "messages",
-			label: "Messages",
-			tokens: messagesTokens,
-			color: "userMessageText",
-			glyph: CELL_FILLED_MESSAGES,
-		},
-	];
+	}));
 
 	let autoCompactBufferTokens = 0;
 	let thresholdTokens: number | undefined;
@@ -505,74 +501,27 @@ export function computeContextBreakdown(session: ContextUsageSession, options: C
 
 interface CellSpec {
 	glyph: string;
-	color: "accent" | "warning" | "success" | "userMessageText" | "customMessageLabel" | "muted" | "dim";
+	color: ThemeColor;
 }
 
 function planCells(breakdown: ContextBreakdown): CellSpec[] {
-	const cells: CellSpec[] = [];
-	const window = breakdown.contextWindow;
-
-	if (window <= 0) {
-		for (let i = 0; i < GRID_CELLS; i++) {
-			cells.push({ glyph: CELL_FREE, color: "dim" });
-		}
-		return cells;
-	}
-
-	const tokensPerCell = window / GRID_CELLS;
-
-	const ratioCells = (tokens: number): number => {
-		if (tokens <= 0) return 0;
-		return Math.max(1, Math.round(tokens / tokensPerCell));
-	};
-
-	const categoryCounts = breakdown.categories.map(category => ({
-		category,
-		count: ratioCells(category.tokens),
-	}));
-
-	let bufferCount = ratioCells(breakdown.autoCompactBufferTokens);
-
-	let usedCount = categoryCounts.reduce((sum, c) => sum + c.count, 0);
-
-	// Prevent the visualization from over-running the grid.
-	const maxUsable = GRID_CELLS - bufferCount;
-	if (usedCount > maxUsable) {
-		// Scale categories proportionally down to fit.
-		let overflow = usedCount - maxUsable;
-		// Trim from the largest categories first to preserve visibility for small ones.
-		const order = [...categoryCounts].sort((a, b) => b.count - a.count);
-		for (const entry of order) {
-			while (overflow > 0 && entry.count > 1) {
-				entry.count -= 1;
-				overflow -= 1;
-			}
-		}
-		usedCount = categoryCounts.reduce((sum, c) => sum + c.count, 0);
-		if (usedCount + bufferCount > GRID_CELLS) {
-			bufferCount = Math.max(0, GRID_CELLS - usedCount);
-		}
-	}
-
-	for (const { category, count } of categoryCounts) {
-		for (let i = 0; i < count; i++) {
-			cells.push({ glyph: category.glyph, color: category.color });
-		}
-	}
-
-	const freeCount = Math.max(0, GRID_CELLS - cells.length - bufferCount);
-	for (let i = 0; i < freeCount; i++) {
-		cells.push({ glyph: CELL_FREE, color: "dim" });
-	}
-	for (let i = 0; i < bufferCount; i++) {
-		cells.push({ glyph: CELL_BUFFER, color: "warning" });
-	}
-
-	// Pad to exactly GRID_CELLS in case rounding undershot.
-	while (cells.length < GRID_CELLS) {
-		cells.push({ glyph: CELL_FREE, color: "dim" });
-	}
-	return cells.slice(0, GRID_CELLS);
+	const segments = [
+		...breakdown.categories.map(category => ({ id: category.id, tokens: category.tokens })),
+		{
+			id: "free" as const,
+			tokens: Math.max(
+				0,
+				breakdown.contextWindow -
+					breakdown.categories.reduce((sum, category) => sum + Math.max(0, category.tokens), 0) -
+					breakdown.autoCompactBufferTokens,
+			),
+		},
+		{ id: "buffer" as const, tokens: breakdown.autoCompactBufferTokens },
+	];
+	return planContextMap(segments, breakdown.contextWindow, GRID_COLS, GRID_ROWS).map(cell => {
+		const presentation = CONTEXT_PRESENTATION[cell.id];
+		return { glyph: activeThemeSymbol(presentation.symbol), color: presentation.color };
+	});
 }
 
 function percentString(part: number, whole: number, fractionDigits = 1): string {
@@ -622,7 +571,7 @@ function buildLegendParts(breakdown: ContextBreakdown): LegendPart[][] {
 	}
 
 	lines.push([
-		{ t: CELL_FREE, s: "dim" },
+		{ t: activeThemeSymbol(CONTEXT_PRESENTATION.free.symbol), s: CONTEXT_PRESENTATION.free.color },
 		{ t: " Free space: " },
 		{ t: formatNumber(freeTokens), s: "strong" },
 		{ t: " " },
@@ -631,7 +580,7 @@ function buildLegendParts(breakdown: ContextBreakdown): LegendPart[][] {
 
 	if (autoCompactBufferTokens > 0) {
 		lines.push([
-			{ t: CELL_BUFFER, s: "warning" },
+			{ t: activeThemeSymbol(CONTEXT_PRESENTATION.buffer.symbol), s: CONTEXT_PRESENTATION.buffer.color },
 			{ t: " Autocompact buffer: " },
 			{ t: formatNumber(autoCompactBufferTokens), s: "strong" },
 			{ t: " " },
@@ -893,19 +842,28 @@ function describeContextFrame(breakdown: ContextBreakdown): NativeNode {
 		contextShareRow(
 			category.id,
 			"omp.context.cat",
-			span("■", category.color),
+			span(activeThemeSymbol(CONTEXT_PRESENTATION[category.id].symbol), CONTEXT_PRESENTATION[category.id].color),
 			category.label,
 			category.tokens,
 			window,
 		),
 	);
-	shares.push(contextShareRow("free", "omp.context.cat.free", span("□", "dim"), "Free space", freeTokens, window));
+	shares.push(
+		contextShareRow(
+			"free",
+			"omp.context.cat.free",
+			span(activeThemeSymbol(CONTEXT_PRESENTATION.free.symbol), CONTEXT_PRESENTATION.free.color),
+			"Free space",
+			freeTokens,
+			window,
+		),
+	);
 	if (autoCompactBufferTokens > 0) {
 		shares.push(
 			contextShareRow(
 				"buffer",
 				"omp.context.cat.buffer",
-				span("▨", "warning"),
+				span(activeThemeSymbol(CONTEXT_PRESENTATION.buffer.symbol), CONTEXT_PRESENTATION.buffer.color),
 				"Autocompact buffer",
 				autoCompactBufferTokens,
 				window,
@@ -954,20 +912,25 @@ export function describeContextUsage(breakdown: ContextBreakdown): NativeNode {
 	});
 }
 
-/**
- * The `/context` report body, without a frame or title of its own (the panel
- * showing it is titled {@link contextUsageHead}): ANSI renders the cell grid
- * beside the legend; natively it is drawn with `meter`s where the terminal has
- * them and as the glyph grid otherwise.
- */
+/** 靜態 context 報表：ANSI grid／legend 與 native meter／glyph fallback 共用分類身份。 */
 export class ContextUsageView extends Container {
 	readonly #breakdown: ContextBreakdown;
+	readonly #theme: Theme;
+	readonly #text: Text;
 	#native: { meter: boolean; node: NativeNode } | undefined;
 
 	constructor(breakdown: ContextBreakdown, theme: Theme) {
 		super();
 		this.#breakdown = breakdown;
-		this.addChild(new Text(renderContextUsage(breakdown, theme), 0, 0));
+		this.#theme = theme;
+		this.#text = new Text(renderContextUsage(breakdown, theme), 0, 0);
+		this.addChild(this.#text);
+	}
+
+	override invalidate(): void {
+		this.#text.setText(renderContextUsage(this.#breakdown, activeTheme ?? this.#theme));
+		super.invalidate();
+		this.#native = undefined;
 	}
 
 	override describe(cx: DescribeContext): NativeNode {

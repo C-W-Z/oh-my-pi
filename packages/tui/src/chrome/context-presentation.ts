@@ -1,0 +1,33 @@
+import type { ThemeColor } from "../theme";
+import type { SymbolKey } from "../theme/symbols";
+
+/** Map 與可互動 legend 的唯一分類視覺來源；glyph 於 render 時解析。 */
+const SYSTEM = { color: "accent", symbol: "context.content" } as const;
+const INSTRUCTIONS = { color: "customMessageLabel", symbol: "context.content" } as const;
+const TOOLS = { color: "warning", symbol: "context.content" } as const;
+const SKILLS = { color: "success", symbol: "context.content" } as const;
+const MESSAGES = { color: "userMessageText", symbol: "context.messages" } as const;
+const OUTPUT = { color: "muted", symbol: "context.messages" } as const;
+export const CONTEXT_PRESENTATION = {
+	"system-prompt": SYSTEM,
+	"instruction-files": INSTRUCTIONS,
+	skills: SKILLS,
+	"built-in-tools": TOOLS,
+	"custom-tools": INSTRUCTIONS,
+	"user-messages": MESSAGES,
+	"assistant-messages": SYSTEM,
+	"assistant-thinking": INSTRUCTIONS,
+	"tool-calls": TOOLS,
+	"tool-output": OUTPUT,
+	buffer: { color: "warning", symbol: "context.buffer" },
+	free: { color: "dim", symbol: "context.free" },
+	systemPrompt: SYSTEM,
+	systemContext: INSTRUCTIONS,
+	systemTools: TOOLS,
+	messages: MESSAGES,
+} as const satisfies Record<string, { color: ThemeColor; symbol: SymbolKey }>;
+export type ContextPresentationId = keyof typeof CONTEXT_PRESENTATION;
+export type ContextCategoryId = Exclude<
+	ContextPresentationId,
+	"buffer" | "free" | "systemPrompt" | "systemContext" | "systemTools" | "messages"
+>;

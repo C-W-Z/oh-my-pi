@@ -4237,7 +4237,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		}
 
 		setSessionActiveToolNames(initialToolNames);
-		const { systemPrompt } = await logger.time(
+		const { systemPrompt, sources: systemPromptSources } = await logger.time(
 			"buildSystemPrompt",
 			rebuildSystemPrompt,
 			initialToolNames,
@@ -4753,6 +4753,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			advisorStreamFn: settingsAwareStreamFn,
 			convertToLlm: convertToLlmFinal,
 			rebuildSystemPrompt,
+			systemPromptSources,
 			getXdevToolEntries: () => (toolSession.xdev ? xdevEntries(toolSession.xdev) : []),
 			xdev: toolSession.xdev,
 			presentationPinnedToolNames,

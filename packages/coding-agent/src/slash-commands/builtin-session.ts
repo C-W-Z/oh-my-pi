@@ -541,7 +541,7 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 	{
 		name: "context",
 		icon: "context",
-		description: "Show estimated context usage breakdown",
+		description: "Browse context usage and saved content",
 		acpDescription: "Show context usage",
 		getTuiAutocompleteDescription: runtime => {
 			const usage = runtime.ctx.session.getContextUsage();
