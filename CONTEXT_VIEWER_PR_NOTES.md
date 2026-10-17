@@ -6,8 +6,8 @@ Local review facts, not a published PR or a submission-ready PR description.
 
 - `/context` opens an interactive, read-only snapshot of loaded prompts, instruction files, skills, active tools, conversation content, and tool output, including before the first message. Reopening refreshes it; browsing neither submits the composer draft nor interrupts background turns.
 - Overview preserves Used/Buffer/Free from the shared breakdown, allocates Used proportionally across raw category estimates, and shows compaction thresholds and estimated Snapcompact savings. Window/Fit percentages always use the full context window.
-- ANSI entries have full-block left borders, theme-colored bracketed headings, dim token counts, bounded previews with omitted source-line counts, and selection-only content hints. Full content and skill input remain scrollable through their tails; the footer divider stays visible on small terminals.
-- Instruction Files have one shortened path heading while body paths remain original. Message entries omit redundant role metadata; converted-message provenance remains available. Thinking blocks are numbered in message order, with encoded and plaintext blocks shown separately.
+- ANSI entries have full-block left borders, theme-colored bracketed headings, dim token counts, bounded previews with omitted source-line counts, selection-only content hints, and originating message locale-formatted dates and times in previews and full content. Tool Output headings keep the tool name; the call ID appears in dim metadata on aggregate and per-tool pages. Full content and skill input remain scrollable through their tails; the footer divider stays visible on small terminals.
+- Instruction Files have one shortened path heading while body paths remain original. Message entries omit redundant role metadata; converted-message provenance remains available. Thinking blocks are numbered in message order, with encoded and plaintext blocks shown separately. Native descriptions carry the same date/time and call-ID metadata.
 - Changes span `packages/coding-agent` and `packages/tui`; both have Changelog entries. The CLI reference documents the viewer's semantics and navigation.
 
 ## What the snapshot means
@@ -44,6 +44,8 @@ The user has deferred all Tern work because no local Tern environment is availab
 ## Verification
 
 Recorded implementation verification: **108 tests passed, 0 failed** across the eight files below; package-local `bun check` passed for `packages/coding-agent` and `packages/tui`. These are not a claim that the repository-wide `bun check` passed. Documentation-only reorganization does not rerun program tests.
+
+Timestamp and call-ID follow-up verification: **34 tests passed, 0 failed** across `context-viewer.test.ts` and `context-view.test.ts`; both package-local `bun check` commands pass.
 
 ```sh
 bun test packages/tui/test/context-viewer.test.ts packages/tui/test/context-map.test.ts packages/tui/test/context-usage.test.ts packages/coding-agent/test/modes/context-view.test.ts packages/coding-agent/test/issue-4806-command-output.test.ts packages/coding-agent/test/session/messages.test.ts packages/coding-agent/test/session-messages.test.ts packages/coding-agent/test/agent-session-interrupted-thinking.test.ts

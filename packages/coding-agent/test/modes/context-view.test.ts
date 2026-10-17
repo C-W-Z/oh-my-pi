@@ -220,6 +220,7 @@ describe("context snapshot", () => {
 				{ type: "thinking", thinking: "signed reasoning", thinkingSignature: "signature" },
 				{ type: "thinking", thinking: "", thinkingSignature: "encoded" },
 				{ type: "toolCall", name: "xd://recall", id: "call", arguments: { query: "history" } },
+				{ type: "text", text: "assistant answer" },
 				{ type: "thinking", thinking: "incomplete trailing reasoning" },
 			]),
 			stopReason: "aborted",
@@ -251,11 +252,20 @@ describe("context snapshot", () => {
 			"signed reasoning",
 			"[Encoded thinking]",
 		]);
+		expect(category(data, "assistant-thinking").entries.map(entry => entry.timestamp)).toEqual([10, 10]);
+		expect(category(data, "assistant-messages").entries.map(entry => entry.timestamp)).toEqual([10]);
+		expect(category(data, "tool-calls").entries[0]?.timestamp).toBe(10);
+		expect(category(data, "tool-output").entries[0]).toMatchObject({
+			label: "recall",
+			timestamp: 12,
+			callId: "call",
+		});
 		expect(category(data, "tool-calls").entries.map(entry => entry.label)).toEqual(["recall"]);
 		expect(category(data, "tool-output").children?.map(group => group.label)).toEqual(["recall"]);
 		expect(category(data, "user-messages").entries.map(entry => [entry.info, entry.text])).toEqual([
 			["custom · interrupted-thinking → developer", "preserved continuity"],
 		]);
+		expect(category(data, "user-messages").entries[0]?.timestamp).toBe(11);
 		expect(session.messages).toEqual(before);
 		expect(buildSessionContextView(session)).toEqual(data);
 		expect(convertToLlm(session.messages)).toBe(projected);

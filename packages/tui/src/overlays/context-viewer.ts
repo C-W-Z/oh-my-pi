@@ -34,6 +34,8 @@ export interface ContextViewEntry {
 	readonly tokens: number;
 	readonly path?: string;
 	readonly info?: string;
+	readonly timestamp?: number;
+	readonly callId?: string;
 }
 
 export interface ContextViewCategory {
@@ -124,6 +126,7 @@ export class ContextViewer implements Component {
 	#sourceLineCounts = new Map<string, number>();
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
 	#overviewBoundary: "first" | "last" | undefined;
+	#hour12: boolean | undefined;
 	#disposed = false;
 
 	constructor(
@@ -277,6 +280,22 @@ export class ContextViewer implements Component {
 				.filter(Boolean)
 				.join(" · "),
 		);
+	}
+	#entryMetadata(entry: ContextViewEntry): string[] {
+		return [
+			this.#entryInfo(entry) || undefined,
+			entry.callId !== undefined ? `Call ID: ${this.#safe(entry.callId)}` : undefined,
+			entry.timestamp !== undefined
+				? `${new Date(entry.timestamp).toLocaleString([], {
+						year: "numeric",
+						month: "2-digit",
+						day: "2-digit",
+						hour: "2-digit",
+						minute: "2-digit",
+						hour12: this.#hour12,
+					})}`
+				: undefined,
+		].filter((line): line is string => !!line);
 	}
 
 	#entryHeader(entry: ContextViewEntry): TspSpan[] {
@@ -448,8 +467,11 @@ export class ContextViewer implements Component {
 		for (const entry of category.entries) {
 			const start = lines.length;
 			lines.push(truncateToWidth(this.#entryHeaderLine(entry), width - 1));
-			const info = this.#entryInfo(entry);
-			if (info) lines.push(...wrapTextWithAnsi(theme.fg("dim", info), Math.max(1, width - 1)));
+			lines.push(
+				...this.#entryMetadata(entry).flatMap(line =>
+					wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width - 1)),
+				),
+			);
 			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
 			const content = this.#entryPreview(entry, Math.max(1, width - 3), budget);
 			lines.push(...content.lines.map(line => `  ${line}`));
@@ -489,10 +511,11 @@ export class ContextViewer implements Component {
 		const entry = this.#entry!;
 		this.#fullScroll.setHeight(height);
 		if (this.#fullCache?.entry !== entry || this.#fullCache.width !== width) {
-			const info = this.#entryInfo(entry);
 			const lines = [
 				truncateToWidth(this.#entryHeaderLine(entry), Math.max(1, width - 1)),
-				...(info ? wrapTextWithAnsi(theme.fg("dim", this.#safe(info)), Math.max(1, width - 1)) : []),
+				...this.#entryMetadata(entry).flatMap(line =>
+					wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width - 1)),
+				),
 				...this.#entryLines(entry, Math.max(1, width - 1)),
 			];
 			this.#fullCache = { entry, width, lines };
@@ -648,9 +671,9 @@ export class ContextViewer implements Component {
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
 		this.#requestRender();
 	}
-
 	describe(cx: DescribeContext): NativeNode {
 		this.#width = Math.max(1, cx.cols - 4);
+		this.#hour12 = cx.hour12;
 		const summary = this.#layout();
 		const children: NativeNode[] = summary.map(line => text([span(line, "dim")], { wrap: "none" }));
 		if (this.#state === "category") children.push(text([span(this.#safe(this.#category!.label), "strong")]));
@@ -711,9 +734,8 @@ export class ContextViewer implements Component {
 					Math.max(1, this.#width - 5),
 					Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - 2)),
 				);
-				const info = this.#entryInfo(entry);
 				const detail = [
-					...(info ? [span(`${info}\n`, "dim")] : []),
+					...this.#entryMetadata(entry).map(line => span(`${line}\n`, "dim")),
 					span(content.lines.join("\n")),
 					...(!content.complete
 						? [
@@ -734,12 +756,11 @@ export class ContextViewer implements Component {
 			);
 		} else {
 			this.#prepareFull(this.#width, this.#height);
-			const info = this.#entryInfo(this.#entry!);
 			const body = node(
 				"col",
 				{},
 				[
-					...(info ? [text([span(this.#safe(info), "dim")])] : []),
+					...this.#entryMetadata(this.#entry!).map(line => text([span(this.#safe(line), "dim")])),
 					text(this.#entryText(this.#entry!), { wrap: "word" }),
 				],
 				`entry-${this.#entry!.id}`,

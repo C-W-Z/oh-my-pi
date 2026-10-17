@@ -3,16 +3,16 @@
 ## Status and permissions
 
 - Branch: `feat/context-viewer`. Check the working tree before editing; local commits authorized. Pushing, PR creation, external posts, and invitations to test require separate authorization.
-- ANSI viewer and whole-sequence base `convertToLlm` projection implemented; both packages have Changelog entries. The requested follow-ups below are recorded only, not implemented.
+- ANSI viewer, whole-sequence base `convertToLlm` projection, entry timestamps, and Tool Output call-ID metadata are implemented. Both packages have Changelog entries. Native visuals remain unverified; Tern visual verification remains deferred.
 - Native multiline entry borders remain unimplemented; Native visuals remain unverified. All Tern work is deferred by the user until an environment is available, not waived or accepted as an appearance difference.
 - Maintainer-facing scope, conversion/cache semantics, behavioral contracts, verification commands/evidence, and PR prerequisites: [CONTEXT_VIEWER_PR_NOTES.md](CONTEXT_VIEWER_PR_NOTES.md). Read it before preparing a PR; it is not a final PR description.
 
-## Requested follow-ups (not implemented)
+## Implemented follow-ups
 
-1. **Entry timestamps:** show time on every entry in User Messages, Assistant Messages, Assistant Thinking, Tool Calls, and Tool Output, in previews and full content. Carry the originating message's stored `timestamp` into viewer-owned data; thinking/tool-call blocks inherit their assistant message's timestamp, while tool results/local executions use their own message timestamps. These are message-level times, not independently measured block execution times; never substitute the viewer-open time. Follow repository date/time formatting conventions.
-2. **Tool Output headings:** the apparent random suffix is `message.toolCallId`, used to correlate calls and results. Remove it from the heading; keep the tool name there and place `Call ID: <id>` on the next metadata line in dim text, preserving existing provenance. Apply to the aggregate and per-tool output pages, previews and full content; keep full IDs available without changing persisted messages or matching logic.
+1. Every User Message, Assistant Message, Assistant Thinking block, Tool Call, and Tool Output entry carries its source message timestamp and displays a locale-formatted date and time in previews and full content. Split blocks inherit the assistant message timestamp; results and local executions use their own source message timestamps.
+2. Tool Output headings show the tool name without the random call-ID suffix. `Call ID: <id>` appears in dim metadata on aggregate and per-tool pages; persisted messages and matching remain unchanged.
 
-Implementation is deferred by the current documentation-only request. When authorized, update ANSI and Native description paths, verify time attribution after splits/omissions, and exercise timestamp/ID readability, wrapping, scrolling, and Enter/Esc at normal/narrow widths. Tern visual verification remains deferred.
+ANSI and Native descriptions include these date/time values and call IDs. Native multiline entry borders remain unimplemented, and Native appearance remains unverified in Tern; all Tern work is deferred until an environment is available, not accepted as an appearance difference.
 
 ## Deferred Tern work
 
@@ -32,7 +32,7 @@ Implementation is deferred by the current documentation-only request. When autho
 - `packages/coding-agent/src/session/context-view.ts`: snapshot; `src/session/messages.ts`: shared conversion.
 - `packages/tui/src/overlays/context-viewer.ts`: rendering/navigation; `src/chrome/context-map.ts` and `src/status-line/context-usage.ts`: capacity/map calculations.
 - `packages/wire/src/tsp.ts`: Native types.
-- Recorded checks: **108 pass, 0 fail**; both package-local `bun check` commands pass. [Verification commands and evidence](CONTEXT_VIEWER_PR_NOTES.md#verification). Documentation-only edits need no program-test rerun.
+- Follow-up verification: 34 tests passed, 0 failed across `context-viewer.test.ts` and `context-view.test.ts`; both package-local `bun check` commands pass. The original implementation verification is recorded in [CONTEXT_VIEWER_PR_NOTES.md](CONTEXT_VIEWER_PR_NOTES.md#verification).
 
 ## Windows smoke setup
 

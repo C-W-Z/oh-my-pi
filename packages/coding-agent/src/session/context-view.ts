@@ -227,6 +227,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 								: `${block.type} · message ${messageIndex + 1}`,
 					info,
 					text,
+					timestamp: original.timestamp,
 					tokens: blockTokens[blockIndex]!,
 				});
 			}
@@ -237,12 +238,14 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				name,
 				{
 					id: `tool-output/${prefix}`,
-					label: `${name}${call ? ` · ${call}` : ""}`,
+					label: name,
 					info,
 					text: contentText(message.content),
+					timestamp: original.timestamp,
+					callId: call,
 					tokens: tokenizer.countMessages([message]),
 				},
-				message.timestamp,
+				original.timestamp,
 			);
 		} else {
 			add("user-messages", {
@@ -250,6 +253,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				label: `${message.role} · message ${messageIndex + 1}`,
 				info,
 				text: contentText(message.content),
+				timestamp: original.timestamp,
 				tokens: tokenizer.countMessages([message]),
 			});
 		}

@@ -8,6 +8,10 @@
 - Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings.
 - Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints.
 
+### Changed
+
+- Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata.
+
 ## [18.11.3] - 2026-10-16
 
 ### Added

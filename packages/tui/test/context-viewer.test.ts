@@ -38,11 +38,13 @@ function fixture(): ContextViewData {
 				id: "result/0",
 				label: "read result",
 				tokens: 20000,
+				timestamp: 0,
+				callId: "call-123",
 				text:
 					Array.from({ length: 100 }, (_, index) => `line ${index}\t${"long ".repeat(30)}`).join("\n") +
 					"\ncontext-output-tail",
 			},
-			{ id: "result/1", label: "bash result", tokens: 10000, text: "short result" },
+			{ id: "result/1", label: "bash result", tokens: 10000, text: "short result", timestamp: 60_000 },
 		],
 	};
 	output.children = [
@@ -295,6 +297,43 @@ describe("ContextViewer presentation", () => {
 			.join("\n");
 		expect(body).toContain(`Source: ${path}`);
 		expect(body).not.toContain("\x1b");
+	});
+
+	it("shows message time and tool call ID in ANSI and native previews and full content", () => {
+		const h = harness();
+		const expectedTime = (hour12: boolean | undefined) =>
+			new Date(0).toLocaleString([], {
+				year: "numeric",
+				month: "2-digit",
+				day: "2-digit",
+				hour: "2-digit",
+				minute: "2-digit",
+				hour12,
+			});
+		h.render();
+		select(h.viewer, "tool-output");
+		const preview = h.render().join("\n");
+		expect(preview).toContain("Call ID: call-123");
+		expect(preview).toContain(expectedTime(undefined));
+		expect(preview).toContain("[read result]");
+		const narrowPreview = h.render(48).join("\n");
+		expect(narrowPreview).toContain("Call ID: call-123");
+		expect(narrowPreview).toContain(
+			new Date(0).toLocaleDateString([], { year: "numeric", month: "2-digit", day: "2-digit" }),
+		);
+		const nativePreview = nodes(h.viewer.describe({ ...cx, hour12: false })).find(
+			node => node.k === "item" && node.key === "result/0",
+		);
+		expect(JSON.stringify(nativePreview)).toContain(expectedTime(false));
+		h.viewer.handleInput("\r");
+		const full = h.render().join("\n");
+		expect(full).toContain("Call ID: call-123");
+		expect(full).toContain(expectedTime(false));
+		const nativeFull = JSON.stringify(h.viewer.describe({ ...cx, hour12: false }));
+		expect(nativeFull).toContain("Call ID: call-123");
+		expect(nativeFull).toContain(expectedTime(false));
+		h.viewer.handleInput("\x1b");
+		expect(h.render(48).join("\n")).toContain("Call ID: call-123");
 	});
 
 	it("shows compaction and estimated wire savings in the overview without a diagnostics navigation level", () => {
@@ -587,7 +626,7 @@ describe("ContextViewer presentation", () => {
 		const next = h.render(48);
 		expect(next.find(line => line.includes("bash result"))).toContain("┃ ");
 		expect(next.find(line => line.includes("short result"))).toContain("┃ ");
-		expect(next.filter(line => line.includes("┃")).length).toBe(2);
+		expect(next.filter(line => line.includes("┃")).length).toBe(3);
 		expect(next.every(line => visibleWidth(line) <= 48)).toBe(true);
 	});
 
