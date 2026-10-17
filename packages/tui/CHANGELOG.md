@@ -8,11 +8,11 @@
 
 ### Changed
 
-- Context Viewer 的 entry 使用 theme 彩色括號標題與暗色 token 數；preview 顯示省略的原始行數，開啟提示僅出現在選中的 entry，skill 的模型輸入內容可完整捲動。
+- Context Viewer entries use theme-colored bracketed headings and dim token counts; previews show omitted source-line counts, content-opening hints appear only on the selected entry, and skill input is fully scrollable.
 
 ### Fixed
 
-- Instruction Files 僅在彩色標題顯示一次縮短路徑，不再重複一列 path metadata；正文內的原始路徑保持不變。
+- Instruction Files show the shortened path only once in the colored heading, without duplicate path metadata; original paths in body content remain unchanged.
 
 ## [18.11.3] - 2026-10-16
 

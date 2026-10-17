@@ -237,7 +237,7 @@ export class ContextViewer implements Component {
 		return lines;
 	}
 
-	/** Preview 只 wrap 有界前綴；省略數計算原始行，不展開尾端內容。 */
+	/** Wrap only a bounded preview prefix; count omitted source lines without expanding the tail. */
 	#entryPreview(
 		entry: ContextViewEntry,
 		width: number,

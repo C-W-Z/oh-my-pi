@@ -168,7 +168,10 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			original.role === "assistant" || original.role === "toolResult" ? [original] : convertToLlm([original]);
 		for (const [convertedIndex, message] of messages.entries()) {
 			const prefix = `${messageIndex}/${convertedIndex}`;
-			const info = `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`;
+			const info =
+				original.role !== message.role || "customType" in original
+					? `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`
+					: undefined;
 			if (message.role === "assistant") {
 				// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
 				const blockTokens = message.content.map(block => {

@@ -8,7 +8,8 @@
 
 ### Changed
 
-- Context Viewer 的 Assistant Thinking 以 message 內的 block 次序編號，encoded 與明文 thinking 各自列出。
+- Context Viewer numbers Assistant Thinking blocks in message order and lists encoded and plaintext thinking separately.
+- Context Viewer omits redundant role labels beneath user messages, assistant messages, thinking, tool calls, and tool output while retaining converted-message provenance.
 - With a first-party Anthropic model on the official API selected, the interactive UI opens the API connection at startup, on model switch, and when you start typing, so the next turn skips connection setup; third-party gateways and custom endpoints are never probed ([#16044](https://github.com/can1357/oh-my-pi/pull/16044) by [@H4vC](https://github.com/H4vC))
 
 ## [18.11.3] - 2026-10-16
