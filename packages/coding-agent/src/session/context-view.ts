@@ -256,14 +256,13 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	for (const group of output.children) group.entries.sort(chronological);
 	const estimatedTokens = categories.reduce((sum, category) => sum + category.tokens, 0);
 	const window = breakdown.contextWindow;
-	const buffer = Math.min(breakdown.autoCompactBufferTokens, Math.max(0, window - estimatedTokens));
 	return {
 		modelLabel: session.model?.name ?? session.model?.id ?? "no model",
 		window,
 		usage: breakdown.usedTokens,
 		estimatedTokens,
-		buffer,
-		free: Math.max(0, window - estimatedTokens - buffer),
+		buffer: breakdown.autoCompactBufferTokens,
+		free: breakdown.freeTokens,
 		breakdown,
 		categories,
 		notices,

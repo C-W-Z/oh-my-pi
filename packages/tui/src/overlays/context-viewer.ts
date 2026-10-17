@@ -6,7 +6,7 @@ import {
 	type ContextCategoryId,
 	type ContextPresentationId,
 } from "../chrome/context-presentation";
-import { OverlayPanel, PanelRows } from "../chrome/overlay-box";
+import { OverlayPanel, PanelDivider, PanelRows } from "../chrome/overlay-box";
 import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
 import {
@@ -22,7 +22,7 @@ import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
-import { type ContextBreakdown, ContextUsageView } from "../status-line/context-usage";
+import { type ContextBreakdown, contextSnapcompactLines } from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
@@ -61,7 +61,7 @@ interface OverviewRow {
 	key: string;
 	id: ContextPresentationId;
 	label: string;
-	tokens: number;
+	tokens: number | undefined;
 	child?: boolean;
 	category?: ContextViewCategory;
 }
@@ -70,6 +70,19 @@ interface EntryRange {
 	start: number;
 	end: number;
 	complete: boolean;
+}
+
+function allocateTokens(weights: readonly number[], total: number): number[] | undefined {
+	const sum = weights.reduce((value, weight) => value + weight, 0);
+	if (!(sum > 0) || !Number.isFinite(sum)) return;
+	const shares = weights.map((weight, index) => {
+		const exact = (total * weight) / sum;
+		return { index, tokens: Math.floor(exact), remainder: exact - Math.floor(exact) };
+	});
+	const remaining = total - shares.reduce((value, share) => value + share.tokens, 0);
+	const ranked = [...shares].sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+	for (let index = 0; index < remaining; index++) ranked[index]!.tokens++;
+	return shares.map(share => share.tokens);
 }
 
 /** Read-only snapshot navigation with shared state for keyboard and native interactions. */
@@ -84,12 +97,12 @@ export class ContextViewer implements Component {
 	readonly #previewScroll = new ScrollView([], { height: 1 });
 	readonly #fullScroll = new ScrollView([], { height: 1 });
 	readonly #panel = new OverlayPanel("Context");
-	readonly #diagnostics: ContextUsageView;
-	readonly #diagnosticScroll: ScrollView;
+	readonly #allocated = new Map<ContextViewCategory, number>();
+	readonly #allocationAvailable: boolean;
 	readonly #header = new PanelRows();
 	readonly #body = new PanelRows();
 	readonly #footer = new PanelRows();
-	#state: "overview" | "category" | "entry" | "diagnostics" = "overview";
+	#state: "overview" | "category" | "entry" = "overview";
 	#category: ContextViewCategory | undefined;
 	#entries = new MenuSelection<ContextViewEntry>([], {
 		getKey: entry => entry.id,
@@ -120,24 +133,47 @@ export class ContextViewer implements Component {
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
 		this.#getRows = options.getRows;
-		this.#diagnostics = new ContextUsageView(data.breakdown, theme);
-		this.#diagnosticScroll = new ScrollView(this.#diagnostics, { height: 1 });
+		const allocated = allocateTokens(
+			data.categories.map(category => category.tokens),
+			data.usage,
+		);
+		this.#allocationAvailable = allocated !== undefined;
+		const allocate = (categories: readonly ContextViewCategory[], tokens: readonly number[]): void => {
+			for (const [index, category] of categories.entries()) {
+				const budget = tokens[index]!;
+				this.#allocated.set(category, budget);
+				if (category.children) {
+					const children = allocateTokens(
+						category.children.map(child => child.tokens),
+						budget,
+					);
+					if (children) allocate(category.children, children);
+				}
+			}
+		};
+		if (allocated) allocate(data.categories, allocated);
 		const rows: OverviewRow[] = [];
 		for (const category of data.categories) {
-			rows.push({ key: category.id, id: category.id, label: category.label, tokens: category.tokens, category });
+			rows.push({
+				key: category.id,
+				id: category.id,
+				label: category.label,
+				tokens: this.#allocated.get(category),
+				category,
+			});
 			for (const child of category.children ?? [])
 				rows.push({
 					key: child.key!,
 					id: category.id,
 					label: child.label,
-					tokens: child.tokens,
+					tokens: this.#allocated.get(child),
 					category: child,
 					child: true,
 				});
 		}
 		rows.push(
-			{ key: "buffer", id: "buffer", label: "Estimated Auto-Compact Buffer", tokens: data.buffer },
-			{ key: "free", id: "free", label: "Estimated Free Space", tokens: data.free },
+			{ key: "buffer", id: "buffer", label: "Auto-Compact Buffer", tokens: data.buffer },
+			{ key: "free", id: "free", label: "Free Space", tokens: data.free },
 		);
 		this.#overview = new MenuSelection(rows, {
 			getKey: item => item.key,
@@ -148,6 +184,7 @@ export class ContextViewer implements Component {
 		this.#footer.setHeight(1);
 		this.#panel.addChild(this.#header);
 		this.#panel.addChild(this.#body);
+		this.#panel.addChild(new PanelDivider());
 		this.#panel.addChild(this.#footer);
 	}
 
@@ -157,7 +194,6 @@ export class ContextViewer implements Component {
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
 		this.#panel.invalidate();
-		this.#diagnosticScroll.invalidate();
 	}
 
 	dispose(): void {
@@ -168,7 +204,6 @@ export class ContextViewer implements Component {
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
 		this.#panel.dispose();
-		this.#diagnosticScroll.dispose();
 	}
 
 	#safe(value: string): string {
@@ -208,14 +243,21 @@ export class ContextViewer implements Component {
 	}
 
 	#share(tokens: number): string {
-		return this.#data.window > 0 ? `${((tokens / this.#data.window) * 100).toFixed(1)}%` : "0.0%";
+		return this.#data.window > 0 ? `${((tokens / this.#data.window) * 100).toFixed(1)}%` : "—";
 	}
 
 	#summary(): string[] {
+		const { usage, window, buffer, free, breakdown } = this.#data;
+		const threshold = breakdown.thresholdTokens;
 		return [
-			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(this.#data.window)} context`,
-			`OMP usage ${formatNumber(this.#data.usage)} · Estimated content ${formatNumber(this.#data.estimatedTokens)}${this.#data.estimatedTokens > this.#data.window ? ` · ${formatNumber(this.#data.estimatedTokens - this.#data.window)} over window` : ""}`,
-			"Read-only snapshot · Reopen to update",
+			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(window)} context · Read-only snapshot`,
+			`Used ${formatNumber(usage)} · Buffer ${formatNumber(buffer)} · Free ${formatNumber(free)}${usage > window ? ` · ${formatNumber(usage - window)} over window` : ""}`,
+			threshold === undefined
+				? "Compaction off"
+				: `Compaction at ${formatNumber(threshold)} · ${formatNumber(Math.abs(threshold - usage))} ${usage > threshold ? "over threshold" : "until threshold"}`,
+			this.#allocationAvailable
+				? "Category shares: estimated allocation of Used · Reopen to update"
+				: "Category estimates unavailable · Original totals retained · Reopen to update",
 		];
 	}
 
@@ -225,7 +267,7 @@ export class ContextViewer implements Component {
 		const selected = this.#overview.selectedKey === item.key;
 		const cursor = selected ? theme.fg("accent", theme.nav.cursor) : " ".repeat(visibleWidth(theme.nav.cursor));
 		const prefix = `${cursor} ${item.child ? "  " : ""}${glyph} `;
-		const suffix = ` ${formatNumber(item.tokens)} ${this.#share(item.tokens)}`;
+		const suffix = item.tokens === undefined ? " —" : ` ${formatNumber(item.tokens)} ${this.#share(item.tokens)}`;
 		const budget = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
 		const label = truncateToWidth(this.#safe(item.label).replace(/\n/g, " "), budget);
 		const name = selected ? theme.bold(label) : label;
@@ -239,8 +281,8 @@ export class ContextViewer implements Component {
 		return (
 			this.#state === "overview" &&
 			this.#mapVisible &&
-			this.#data.estimatedTokens > 0 &&
-			contextFitScale(this.#data.estimatedTokens, this.#data.window) < this.#data.window
+			this.#data.usage > 0 &&
+			contextFitScale(this.#data.usage, this.#data.window) < this.#data.window
 		);
 	}
 
@@ -248,7 +290,14 @@ export class ContextViewer implements Component {
 		width: number,
 		height: number,
 	): { columns: number; rows: number; cellWidth: number; gap: string; width: number } | undefined {
-		if (width < 52 || height < 2 || !(this.#data.window > 0) || !Number.isFinite(this.#data.window)) return;
+		if (
+			width < 52 ||
+			height < 2 ||
+			!(this.#data.window > 0) ||
+			!Number.isFinite(this.#data.window) ||
+			!this.#allocationAvailable
+		)
+			return;
 		const gap = width >= 72 ? " " : "";
 		const cellWidth = Math.max(
 			1,
@@ -261,11 +310,11 @@ export class ContextViewer implements Component {
 	}
 
 	#mapCells(columns: number, rows: number) {
-		const scale = this.#fit ? contextFitScale(this.#data.estimatedTokens, this.#data.window) : this.#data.window;
+		const scale = this.#fit ? contextFitScale(this.#data.usage, this.#data.window) : this.#data.window;
 		return planContextMap(
 			[
-				...this.#data.categories.map(category => ({ id: category.id, tokens: category.tokens })),
-				{ id: "free" as const, tokens: Math.max(0, scale - this.#data.estimatedTokens - this.#data.buffer) },
+				...this.#data.categories.map(category => ({ id: category.id, tokens: this.#allocated.get(category) ?? 0 })),
+				{ id: "free" as const, tokens: this.#data.free },
 				{ id: "buffer" as const, tokens: this.#data.buffer },
 			],
 			scale,
@@ -279,8 +328,11 @@ export class ContextViewer implements Component {
 		this.#mapVisible = !!geometry;
 		const listWidth = geometry ? width - geometry.width - 3 : width;
 		const source = this.#overview.items.map(item => this.#legendLine(item, Math.max(0, listWidth - 1)));
+		const diagnostics = contextSnapcompactLines(this.#data.breakdown);
 		for (const notice of this.#data.notices)
 			source.push(...wrapTextWithAnsi(theme.fg("warning", this.#safe(notice)), Math.max(1, listWidth - 1)));
+		for (const line of diagnostics)
+			source.push(...wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, listWidth - 1)));
 		this.#overviewScroll.setHeight(height);
 		this.#overviewScroll.setLines(source);
 		this.#overviewScroll.revealRange(
@@ -352,21 +404,19 @@ export class ContextViewer implements Component {
 	}
 
 	#previewLines(width: number, height: number): string[] {
-		this.#preparePreview(width, height);
+		const contentWidth = Math.max(1, width - 2);
+		this.#preparePreview(contentWidth, height);
 		const range = this.#previewCache!.ranges[this.#entries.selectedIndex];
 		if (range)
 			this.#previewScroll.revealRange(
 				{ id: this.#entries.selectedKey!, start: range.start, end: range.end, margin: 0, oversized: "start" },
-				width,
+				contentWidth,
 			);
 		const offset = this.#previewScroll.getScrollOffset();
-		return this.#previewScroll
-			.render(width)
-			.map((line, index) =>
-				range && offset + index === range.start
-					? truncateToWidth(`${theme.fg("accent", theme.nav.cursor)} ${line}`, width)
-					: line,
-			);
+		return this.#previewScroll.render(contentWidth).map((line, index) => {
+			const selected = range && offset + index >= range.start && offset + index < range.end;
+			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
+		});
 	}
 
 	#fullLines(width: number, height: number): string[] {
@@ -388,46 +438,47 @@ export class ContextViewer implements Component {
 		}
 	}
 
-	#diagnosticLines(width: number, height: number): readonly string[] {
-		this.#diagnosticScroll.setHeight(height);
-		return this.#diagnosticScroll.render(width);
-	}
-
 	render(width: number): readonly string[] {
 		this.#width = Math.max(1, width - 4);
 		const terminalRows = Math.max(1, this.#getRows());
-		this.#height = Math.max(1, terminalRows - 6);
+		const summary = this.#layout();
 		this.#panel.title =
 			this.#state === "overview"
 				? `Context · ${this.#fit ? "Fit" : "Window"}`
-				: this.#state === "diagnostics"
-					? "Context · Usage diagnostics"
-					: this.#state === "category"
-						? this.#safe(this.#category!.label)
-						: this.#safe(this.#entry!.label);
-		this.#header.setLines(this.#summary().map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
+				: this.#state === "category"
+					? this.#safe(this.#category!.label)
+					: this.#safe(this.#entry!.label);
+		this.#header.setHeight(summary.length);
+		this.#header.setLines(summary.map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
 		const lines =
 			this.#state === "overview"
 				? this.#overviewLines(this.#width, this.#height)
-				: this.#state === "diagnostics"
-					? this.#diagnosticLines(this.#width, this.#height)
-					: this.#state === "category"
-						? this.#previewLines(this.#width, this.#height)
-						: this.#fullLines(this.#width, this.#height);
+				: this.#state === "category"
+					? this.#previewLines(this.#width, this.#height)
+					: this.#fullLines(this.#width, this.#height);
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
 		const zoom = this.#canZoom ? " · z Window/Fit" : "";
-		const diagnostics = this.#state === "overview" ? " · d Usage diagnostics" : "";
 		this.#footer.setLines([
 			truncateToWidth(
 				theme.fg(
 					"dim",
-					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}${diagnostics}`,
+					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}`,
 				),
 				this.#width,
 			),
 		]);
-		return this.#panel.render(width).slice(0, terminalRows);
+		const rendered = this.#panel.render(width);
+		if (terminalRows >= 4) return rendered;
+		if (terminalRows === 3) return [rendered[0]!, rendered[rendered.length - 2]!, rendered[rendered.length - 1]!];
+		return terminalRows === 2 ? [rendered[0]!, rendered[rendered.length - 1]!] : [rendered[rendered.length - 1]!];
+	}
+
+	#layout(): string[] {
+		const rows = Math.max(1, this.#getRows());
+		const summary = this.#summary().slice(0, Math.max(0, rows - 5));
+		this.#height = Math.max(0, rows - summary.length - 4);
+		return summary;
 	}
 
 	#activate(): void {
@@ -441,7 +492,7 @@ export class ContextViewer implements Component {
 			if (this.#category.entries.length === 1) this.#openEntry(this.#category.entries[0]!, "overview");
 			else {
 				this.#state = "category";
-				if (this.#width > 0) this.#preparePreview(this.#width, this.#height);
+				if (this.#width > 0) this.#preparePreview(Math.max(1, this.#width - 2), this.#height);
 			}
 		} else if (this.#state === "category") {
 			const entry = this.#entries.selectedItem;
@@ -464,15 +515,11 @@ export class ContextViewer implements Component {
 
 	#back(): void {
 		if (this.#state === "entry") this.#state = this.#entryParent;
-		else if (this.#state === "category" || this.#state === "diagnostics") this.#state = "overview";
+		else if (this.#state === "category") this.#state = "overview";
 		else this.#close();
 	}
 
 	#navigate(delta: number): void {
-		if (this.#state === "diagnostics") {
-			this.#diagnosticScroll.scroll(delta);
-			return;
-		}
 		if (this.#state === "entry") {
 			this.#fullScroll.scroll(delta);
 			return;
@@ -507,8 +554,7 @@ export class ContextViewer implements Component {
 			matchesSelectPageDown(data) ||
 			getKeybindings().matches(data, "tui.select.confirm") ||
 			(["home", "end", "enter", "j", "k"] as const).some(key => matchesKey(data, key)) ||
-			(data === "z" && this.#canZoom) ||
-			(data === "d" && this.#state === "overview")
+			(data === "z" && this.#canZoom)
 		);
 	}
 
@@ -531,8 +577,8 @@ export class ContextViewer implements Component {
 			by = "page-down";
 		} else if (matchesKey(data, "home") || matchesKey(data, "end")) {
 			const last = matchesKey(data, "end");
-			if (this.#state === "entry" || this.#state === "diagnostics") {
-				const scroll = this.#state === "entry" ? this.#fullScroll : this.#diagnosticScroll;
+			if (this.#state === "entry") {
+				const scroll = this.#fullScroll;
 				if (last) scroll.scrollToBottom();
 				else scroll.scrollToTop();
 			} else if (this.#state === "overview") {
@@ -541,19 +587,14 @@ export class ContextViewer implements Component {
 			} else this.#entries.moveToBoundary(last ? "last" : "first");
 			by = last ? "end" : "start";
 		} else if (data === "z" && this.#canZoom) this.#fit = !this.#fit;
-		else if (data === "d" && this.#state === "overview") {
-			this.#state = "diagnostics";
-			this.#nativeScroll = { by: "start", n: this.#nativeScroll.n + 1 };
-			this.#diagnosticScroll.scrollToTop();
-		}
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
 		this.#requestRender();
 	}
 
 	describe(cx: DescribeContext): NativeNode {
 		this.#width = Math.max(1, cx.cols - 4);
-		this.#height = Math.max(1, this.#getRows() - 6);
-		const children: NativeNode[] = this.#summary().map(line => text([span(line, "dim")], { wrap: "word" }));
+		const summary = this.#layout();
+		const children: NativeNode[] = summary.map(line => text([span(line, "dim")], { wrap: "none" }));
 		if (this.#state === "entry" || this.#state === "category")
 			children.push(
 				text([span(this.#safe(this.#state === "category" ? this.#category!.label : this.#entry!.label), "strong")]),
@@ -567,13 +608,17 @@ export class ContextViewer implements Component {
 				];
 				return node(
 					"item",
-					{ label, value: `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`, disabled: !item.category },
+					{
+						label,
+						value: item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`,
+						disabled: !item.category,
+					},
 					undefined,
 					item.key,
 				);
 			});
 			const list = selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
-			const geometry = this.#mapGeometry(Math.max(1, cx.cols - 4), Math.max(1, this.#getRows() - 6));
+			const geometry = this.#mapGeometry(this.#width, this.#height);
 			this.#mapVisible = !!geometry;
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
@@ -594,12 +639,14 @@ export class ContextViewer implements Component {
 					);
 				children.push(row([col(grid), list], { gap: "lg" }));
 			} else children.push(list);
+			for (const line of contextSnapcompactLines(this.#data.breakdown))
+				children.push(text([span(line, "dim")], { wrap: "word" }));
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
-		} else if (this.#state === "diagnostics") {
-			children.push({ ...this.#diagnostics.describe(cx), scroll: this.#nativeScroll });
+			const body = children.splice(summary.length);
+			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
-			this.#previewLines(Math.max(1, cx.cols - 4), Math.max(1, this.#getRows() - 6));
+			this.#previewLines(this.#width, this.#height);
 			const items = this.#entries.items.map(entry =>
 				node(
 					"item",
@@ -607,8 +654,8 @@ export class ContextViewer implements Component {
 						label: this.#safe(entry.label),
 						detail: this.#entryPreview(
 							entry,
-							Math.max(1, cx.cols - 8),
-							PREVIEW_LIMITS.OUTPUT_EXPANDED,
+							Math.max(1, this.#width - 5),
+							Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - 2)),
 						).lines.join("\n"),
 					},
 					undefined,
@@ -638,10 +685,10 @@ export class ContextViewer implements Component {
 			children.push({ ...body, scroll: this.#nativeScroll });
 		}
 		children.push(
+			node("rule"),
 			actionBar([
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
 				...(this.#canZoom ? [actionButton(this.#fit ? "Window" : "Fit", "zoom")] : []),
-				...(this.#state === "overview" ? [actionButton("Usage diagnostics", "diagnostics")] : []),
 				actionButton("Close", "close"),
 			]),
 		);
@@ -654,7 +701,6 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (event.act === "zoom") this.handleInput("z");
-			else if (event.act === "diagnostics") this.handleInput("d");
 		} else if (event.type === "select" || event.type === "activate") {
 			if (this.#state === "overview") {
 				const item = this.#overview.items.find(item => item.key === event.item);

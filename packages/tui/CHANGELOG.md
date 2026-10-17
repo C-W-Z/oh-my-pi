@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added an ANSI and native Context Viewer with category navigation, full-content browsing, estimated capacity, and usage diagnostics; body paths stay intact, and large tool outputs are fully wrapped only when opened.
+- Added an ANSI and native Context Viewer with detailed category navigation, full-content browsing, original usage totals, proportionally estimated category shares, and integrated compaction and Snapcompact diagnostics; ANSI previews mark the whole selected entry and keep footer borders visible on small terminals.
 
 ## [18.11.3] - 2026-10-16
 

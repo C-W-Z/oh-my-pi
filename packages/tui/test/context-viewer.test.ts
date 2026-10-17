@@ -50,31 +50,36 @@ function fixture(): ContextViewData {
 		usage: 85000,
 		estimatedTokens: 80000,
 		buffer: 20000,
-		free: 100000,
+		free: 95000,
 		notices: [],
-		breakdown: computeContextBreakdown(
-			{
-				model: getBundledModel("anthropic", "claude-sonnet-4-5"),
-				systemPrompt: ["system"],
-				agent: { tokenizer: new Tokenizer(), state: { tools: [] } },
-				messages: [],
-			},
-			{
-				compaction: DEFAULT_COMPACTION_SETTINGS,
-				snapcompact: {
-					visionCapable: true,
-					savedTokens: 6000,
-					systemPrompt: {
-						applied: true,
-						textTokens: 10000,
-						imageTokens: 4000,
-						frames: 2,
+		breakdown: {
+			...computeContextBreakdown(
+				{
+					model: getBundledModel("anthropic", "claude-sonnet-4-5"),
+					systemPrompt: ["system"],
+					agent: { tokenizer: new Tokenizer(), state: { tools: [] } },
+					messages: [],
+				},
+				{
+					compaction: DEFAULT_COMPACTION_SETTINGS,
+					snapcompact: {
+						visionCapable: true,
 						savedTokens: 6000,
-						scope: "all",
+						systemPrompt: {
+							applied: true,
+							textTokens: 10000,
+							imageTokens: 4000,
+							frames: 2,
+							savedTokens: 6000,
+							scope: "all",
+						},
 					},
 				},
-			},
-		),
+			),
+			usedTokens: 85000,
+			freeTokens: 95000,
+			autoCompactBufferTokens: 20000,
+		},
 		categories: [
 			{
 				id: "system-prompt",
@@ -235,24 +240,24 @@ describe("ContextViewer presentation", () => {
 		expect(body).not.toContain("\x1b");
 	});
 
-	it("opens the original usage report with compaction markers and savings, then returns without closing", () => {
+	it("shows compaction and estimated wire savings in the overview without a diagnostics navigation level", () => {
 		const data = fixture();
 		const h = harness(data);
-		h.render();
+		const overview = h.render(160);
+		expect(overview.join("\n")).toContain("85K");
+		expect(overview.join("\n")).toContain("95K");
+		expect(overview.join("\n")).toContain("Compaction");
+		expect(h.viewer.capturesInput("d")).toBe(false);
 		h.viewer.handleInput("d");
-		h.render();
-		const diagnostic = nodes(h.viewer.describe(cx));
-		const meter = diagnostic.find(node => node.k === "meter");
-		expect(meter).toMatchObject({
-			p: { marks: [expect.objectContaining({ at: data.breakdown.thresholdTokens! / data.window })] },
-		});
-		expect(diagnostic.some(node => node.key === "snapcompact")).toBe(true);
+		expect(h.render(160)).toEqual(overview);
 		h.viewer.handleInput("\x1b[F");
-		expect(h.render(160).join("\n")).toContain("6K");
+		const savings = h.render(160).join("\n");
+		expect(savings).toContain("6K");
+		expect(savings).toContain("79K");
+		expect(savings).toContain("2 frames");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.p?.actions?.click === "diagnostics")).toBe(false);
 		h.viewer.handleInput("\x1b");
-		h.render();
-		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-		expect(h.closed()).toBe(0);
+		expect(h.closed()).toBe(1);
 	});
 
 	it("preserves counts and percentage denominators when switching Window/Fit", () => {
@@ -273,13 +278,13 @@ describe("ContextViewer presentation", () => {
 	});
 
 	it("does not capture zoom for an empty, window-sized or hidden map", () => {
-		for (const [estimatedTokens, window, width] of [
+		for (const [usage, window, width] of [
 			[0, 200000, 100],
 			[80000, 10000, 100],
 			[80000, 200000, 48],
 		]) {
 			const data = fixture();
-			const h = harness({ ...data, estimatedTokens: estimatedTokens!, window: window! });
+			const h = harness({ ...data, usage: usage!, window: window! });
 			h.render(width);
 			expect(h.viewer.capturesInput("z")).toBe(false);
 			h.viewer.handleInput("z");
@@ -396,6 +401,158 @@ describe("ContextViewer presentation", () => {
 							node.k === "text" && node.p?.spans?.some(span => span.t.trim() === glyph && span.s === "accent"),
 					),
 			).toBe(true);
+		}
+	});
+
+	it("conserves Used across top-level allocations and splits only the parent's budget among children", () => {
+		const data = fixture();
+		const categories = data.categories.filter(category => category.tokens > 0);
+		for (const category of categories) category.tokens = 1;
+		const output = categories.at(-1)!;
+		for (const child of output.children!) child.tokens = 1;
+		const h = harness({ ...data, usage: 7, estimatedTokens: 5, window: 100, buffer: 10, free: 83, categories });
+		const value = (key: string) => {
+			const item = nodes(h.viewer.describe(cx)).find(node => node.key === key);
+			return item?.k === "item" ? item.p?.value : undefined;
+		};
+		expect(categories.map(category => value(category.id))).toEqual([
+			"2 · 2.0%",
+			"2 · 2.0%",
+			"1 · 1.0%",
+			"1 · 1.0%",
+			"1 · 1.0%",
+		]);
+		expect(value("tool-output/read")).toBe("1 · 1.0%");
+		expect(value("tool-output/bash")).toBe("0 · 0.0%");
+		expect(value("buffer")).toBe("10 · 10.0%");
+		expect(value("free")).toBe("83 · 83.0%");
+		expect(categories.map(category => category.tokens)).toEqual([1, 1, 1, 1, 1]);
+	});
+
+	it("assigns leftover tokens by descending remainder before category order", () => {
+		const data = fixture();
+		const categories = data.categories.slice(0, 3);
+		for (const [index, category] of categories.entries()) category.tokens = [1, 2, 4][index]!;
+		const h = harness({ ...data, categories, estimatedTokens: 7, usage: 5, window: 100 });
+		const values = nodes(h.viewer.describe(cx)).filter(node => node.k === "item" && !node.p?.disabled);
+		expect(values.map(node => (node.k === "item" ? node.p?.value : undefined))).toEqual([
+			"1 · 1.0%",
+			"1 · 1.0%",
+			"3 · 3.0%",
+		]);
+	});
+
+	it("reserves gutter and scrollbar columns before wrapping a wide-character preview", () => {
+		const data = fixture();
+		const output = data.categories.find(category => category.id === "tool-output")!;
+		const body = `${"寬".repeat(18)}END`;
+		output.entries[0] = { id: "result/0", label: "wide", tokens: 1, text: body };
+		output.entries[1] = { id: "result/1", label: "overflow", tokens: 1, text: "overflow\n".repeat(100) };
+		const h = harness(data);
+		h.resize(18);
+		h.render(48);
+		select(h.viewer, "tool-output");
+		const lines = h.render(48);
+		const content = lines.find(line => line.includes("END"));
+		expect(content).toContain(`┃   ${body}`);
+		expect(content).toMatch(/[│█] │$/);
+		expect(lines.every(line => visibleWidth(line) <= 48)).toBe(true);
+	});
+
+	it("keeps original totals without inventing shares when estimates or capacity are unavailable", () => {
+		const data = fixture();
+		for (const category of data.categories) category.tokens = 0;
+		const h = harness({ ...data, estimatedTokens: 0 });
+		expect(h.render(160).join("\n")).toContain("unavailable");
+		expect(h.render(160).join("\n")).toContain("85K");
+		expect(h.viewer.capturesInput("z")).toBe(false);
+		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
+		expect(items.find(node => node.key === "system-prompt")?.p?.value).toBe("—");
+		const zero = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
+		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
+		expect(zero.viewer.capturesInput("z")).toBe(false);
+		const over = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
+		expect(over.render(160).join("\n")).toContain("5 over window");
+		const top = nodes(over.viewer.describe(cx)).find(node => node.key === "system-prompt");
+		expect(top?.k === "item" && top.p?.value).toBe("4 · 40.0%");
+	});
+
+	it("uses Used rather than raw estimates to enable Fit, including a zero-usage allocation", () => {
+		const data = fixture();
+		const h = harness({ ...data, usage: 20000, estimatedTokens: 400000 });
+		h.render();
+		expect(h.viewer.capturesInput("z")).toBe(true);
+		h.viewer.handleInput("z");
+		expect(h.render()[0]).toContain("Fit");
+		const zero = harness({ ...data, usage: 0, buffer: 20000, free: 180000 });
+		const values = nodes(zero.viewer.describe(cx)).filter(node => node.k === "item");
+		expect(values.find(node => node.key === "tool-output")?.p?.value).toBe("0 · 0.0%");
+		expect(values.find(node => node.key === "free")?.p?.value).toBe("180K · 90.0%");
+	});
+
+	it("keeps disabled and exceeded compaction states and inactive Snapcompact reasons visible", () => {
+		const data = fixture();
+		const disabled = harness({ ...data, breakdown: { ...data.breakdown, thresholdTokens: undefined } });
+		expect(disabled.render(160).join("\n")).toContain("Compaction off");
+		const exceeded = harness({
+			...data,
+			breakdown: {
+				...data.breakdown,
+				thresholdTokens: 80000,
+				snapcompact: { visionCapable: false, savedTokens: 0 },
+			},
+		});
+		expect(exceeded.render(160).join("\n")).toContain("5K over threshold");
+		exceeded.viewer.handleInput("\x1b[F");
+		expect(exceeded.render(160).join("\n")).toContain("no image input");
+	});
+
+	it("keeps selected block gutters on visible body rows after the title scrolls away without marking separators", () => {
+		const data = fixture();
+		const output = data.categories.find(category => category.id === "tool-output")!;
+		output.entries[0] = {
+			id: "result/0",
+			label: "first title",
+			info: "metadata",
+			tokens: 1,
+			text: "first body\n\n寬字 body\nlast body\nanother body\nmore body\nfinal body",
+		};
+		const h = harness(data);
+		h.resize(12);
+		h.render(48);
+		select(h.viewer, "tool-output");
+		const before = h.render(48);
+		expect(before.find(line => line.includes("first title"))).toContain("┃ ");
+		h.viewer.handleInput("j");
+		h.viewer.handleInput("j");
+		h.viewer.handleInput("j");
+		const scrolled = h.render(48);
+		expect(scrolled.some(line => line.includes("first title"))).toBe(false);
+		expect(scrolled.filter(line => line.includes("body")).every(line => line.includes("┃ "))).toBe(true);
+		h.viewer.handleNativeEvent({ type: "select", key: "entries", item: "result/1" });
+		const next = h.render(48);
+		expect(next.find(line => line.includes("bash result"))).toContain("┃ ");
+		expect(next.find(line => line.includes("short result"))).toContain("┃ ");
+		expect(next.filter(line => line.includes("┃")).length).toBe(2);
+		expect(next.every(line => visibleWidth(line) <= 48)).toBe(true);
+	});
+
+	it("preserves the footer divider and bottom border at short heights in overview, preview and full content", () => {
+		const h = harness();
+		for (const page of ["overview", "category", "entry"]) {
+			if (page === "category") select(h.viewer, "tool-output");
+			if (page === "entry") h.viewer.handleInput("\r");
+			for (const height of [18, 6, 4]) {
+				h.resize(height);
+				const lines = h.render(48);
+				expect(lines).toHaveLength(height);
+				expect(lines.at(-3)).toMatch(/^├.*┤$/);
+				expect(lines.at(-2)).toContain("Esc");
+				expect(lines.at(-1)).toMatch(/^╰.*╯$/);
+				expect(lines.every(line => visibleWidth(line) <= 48)).toBe(true);
+			}
+			h.resize(24);
+			h.render();
 		}
 	});
 

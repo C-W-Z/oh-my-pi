@@ -99,7 +99,23 @@ describe("context snapshot", () => {
 		const plain = buildSessionContextView(sessionWith({ prompt }));
 		expect(plain.breakdown.snapcompact).toBeUndefined();
 		expect(data.estimatedTokens).toBe(plain.estimatedTokens);
-		expect(data.free + data.buffer + data.estimatedTokens).toBe(data.window);
+		expect(data.free + data.buffer + data.usage).toBe(data.window);
+	});
+
+	it("keeps provider-anchored capacity when raw prompt estimates exceed the window", () => {
+		const message = reply([{ type: "text", text: "saved answer" }]);
+		message.usage.input = 100;
+		message.usage.totalTokens = 124;
+		const session = sessionWith({
+			prompt: ["large prompt ".repeat(120000)],
+			messages: [message],
+			settings: Settings.isolated({ "compaction.enabled": true, "todo.enabled": false }),
+		});
+		const data = buildSessionContextView(session);
+		expect(data.estimatedTokens).toBeGreaterThan(data.window);
+		expect(data.usage).toBe(100);
+		expect(data.buffer).toBeGreaterThan(0);
+		expect(data.free + data.buffer).toBe(data.window - 100);
 	});
 
 	it("previews actual static sources before the first message without reading skill or instruction files", async () => {

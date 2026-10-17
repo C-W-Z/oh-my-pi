@@ -656,6 +656,10 @@ function buildSnapcompactParts(breakdown: ContextBreakdown): LegendPart[][] {
 	return lines;
 }
 
+export function contextSnapcompactLines(breakdown: ContextBreakdown): string[] {
+	return buildSnapcompactParts(breakdown).map(line => line.map(part => part.t).join(""));
+}
+
 function buildLegendLines(breakdown: ContextBreakdown, theme: Theme): string[] {
 	return buildLegendParts(breakdown).map(line => {
 		let out = "";

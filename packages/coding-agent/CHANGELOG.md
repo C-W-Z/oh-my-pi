@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added a read-only interactive `/context` viewer for loaded prompts, instructions, skills, tools, conversation content, and tool output, including before the first message; press `d` for usage diagnostics, compaction thresholds, and estimated Snapcompact savings.
+- Added a read-only interactive `/context` viewer for loaded prompts, instructions, skills, tools, conversation content, and tool output, including before the first message; the overview preserves original Used, Buffer, and Free totals, allocates estimated category shares, and shows compaction thresholds and estimated Snapcompact savings.
 
 ### Changed
 
