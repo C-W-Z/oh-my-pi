@@ -4,17 +4,9 @@
 
 ### Added
 
-- Added an ANSI and native Context Viewer with detailed category navigation, full-content browsing, original usage totals, proportionally estimated category shares, and integrated compaction and Snapcompact diagnostics; ANSI previews mark the whole selected entry and keep footer borders visible on small terminals.
-
-### Changed
-
-- Context Viewer uses a compact three-line header for model/window, usage totals, and estimate/refresh hints; compaction diagnostics remain in the scrollable overview.
-- Selected Context Viewer categories highlight both their names and token/percentage totals with the category's theme color.
-- Context Viewer entries use theme-colored bracketed headings and dim token counts; previews show omitted source-line counts, content-opening hints appear only on the selected entry, and skill input is fully scrollable.
-
-### Fixed
-
-- Instruction Files show the shortened path only once in the colored heading, without duplicate path metadata; original paths in body content remain unchanged.
+- Added an ANSI and native Context Viewer with category navigation, entry previews, and scrollable full-content inspection.
+- Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings.
+- Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints.
 
 ## [18.11.3] - 2026-10-16
 
