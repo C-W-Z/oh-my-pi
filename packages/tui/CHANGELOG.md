@@ -8,7 +8,8 @@
 
 ### Changed
 
-- Context Viewer identifies its snapshot as active context projected through base LLM conversion, rather than a transcript or final provider request.
+- Context Viewer uses a compact three-line header for model/window, usage totals, and estimate/refresh hints; compaction diagnostics remain in the scrollable overview.
+- Selected Context Viewer categories highlight both their names and token/percentage totals with the category's theme color.
 - Context Viewer entries use theme-colored bracketed headings and dim token counts; previews show omitted source-line counts, content-opening hints appear only on the selected entry, and skill input is fully scrollable.
 
 ### Fixed

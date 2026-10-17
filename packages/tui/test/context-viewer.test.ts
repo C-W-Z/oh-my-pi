@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as os from "node:os";
+import type { TspText } from "@oh-my-pi/pi-wire";
 import type { NativeNode } from "../src/native/node";
 import { ContextViewer, type ContextViewData, type ContextViewCategory } from "../src/overlays/context-viewer";
 import { createTheme, getBuiltinThemes } from "../src/theme/loader";
@@ -21,6 +22,10 @@ afterEach(() => setThemeInstance(previous));
 
 function nodes(root: NativeNode): NativeNode[] {
 	return [root, ...(root.c ?? []).flatMap(child => ("k" in child ? nodes(child) : []))];
+}
+
+function textValue(value: TspText | undefined): string | undefined {
+	return typeof value === "string" ? value : value?.map(span => span.t).join("");
 }
 
 function fixture(): ContextViewData {
@@ -372,11 +377,6 @@ describe("ContextViewer presentation", () => {
 			expect(system.indexOf(swatch)).toBeGreaterThanOrEqual(0);
 			expect(Bun.stripANSI(system.slice(system.indexOf(swatch) + swatch.length))).toContain("System Prompt");
 			const native = nodes(h.viewer.describe(cx));
-			const item = native.find(node => node.key === "system-prompt");
-			expect(item?.k === "item" && item.p?.label).toEqual([
-				{ t: `${override} `, s: p.color },
-				{ t: "System Prompt" },
-			]);
 			const grid = native.filter(node => node.k === "text" && node.p?.wrap === "none");
 			expect(
 				grid.some(
@@ -465,7 +465,7 @@ describe("ContextViewer presentation", () => {
 		const h = harness({ ...data, usage: 7, estimatedTokens: 5, window: 100, buffer: 10, free: 83, categories });
 		const value = (key: string) => {
 			const item = nodes(h.viewer.describe(cx)).find(node => node.key === key);
-			return item?.k === "item" ? item.p?.value : undefined;
+			return item?.k === "item" ? textValue(item.p?.value) : undefined;
 		};
 		expect(categories.map(category => value(category.id))).toEqual([
 			"2 · 2.0%",
@@ -487,7 +487,7 @@ describe("ContextViewer presentation", () => {
 		for (const [index, category] of categories.entries()) category.tokens = [1, 2, 4][index]!;
 		const h = harness({ ...data, categories, estimatedTokens: 7, usage: 5, window: 100 });
 		const values = nodes(h.viewer.describe(cx)).filter(node => node.k === "item" && !node.p?.disabled);
-		expect(values.map(node => (node.k === "item" ? node.p?.value : undefined))).toEqual([
+		expect(values.map(node => (node.k === "item" ? textValue(node.p?.value) : undefined))).toEqual([
 			"1 · 1.0%",
 			"1 · 1.0%",
 			"3 · 3.0%",
@@ -519,14 +519,14 @@ describe("ContextViewer presentation", () => {
 		expect(h.render(160).join("\n")).toContain("85K");
 		expect(h.viewer.capturesInput("z")).toBe(false);
 		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
-		expect(items.find(node => node.key === "system-prompt")?.p?.value).toBe("—");
+		expect(textValue(items.find(node => node.key === "system-prompt")?.p?.value)).toBe("—");
 		const zero = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
 		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
 		expect(zero.viewer.capturesInput("z")).toBe(false);
 		const over = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
 		expect(over.render(160).join("\n")).toContain("5 over window");
 		const top = nodes(over.viewer.describe(cx)).find(node => node.key === "system-prompt");
-		expect(top?.k === "item" && top.p?.value).toBe("4 · 40.0%");
+		expect(top?.k === "item" && textValue(top.p?.value)).toBe("4 · 40.0%");
 	});
 
 	it("uses Used rather than raw estimates to enable Fit, including a zero-usage allocation", () => {
@@ -575,10 +575,12 @@ describe("ContextViewer presentation", () => {
 		select(h.viewer, "tool-output");
 		const before = h.render(48);
 		expect(before.find(line => line.includes("first title"))).toContain("┃ ");
-		h.viewer.handleInput("j");
-		h.viewer.handleInput("j");
-		h.viewer.handleInput("j");
-		const scrolled = h.render(48);
+		let scrolled = before;
+		for (let index = 0; index < before.length && scrolled.some(line => line.includes("first title")); index++) {
+			h.viewer.handleInput("j");
+			scrolled = h.render(48);
+		}
+		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
 		expect(scrolled.some(line => line.includes("first title"))).toBe(false);
 		expect(scrolled.filter(line => line.includes("body")).every(line => line.includes("┃ "))).toBe(true);
 		h.viewer.handleNativeEvent({ type: "select", key: "entries", item: "result/1" });

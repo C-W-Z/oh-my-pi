@@ -309,19 +309,24 @@ export class ContextViewer implements Component {
 	}
 
 	#summary(): string[] {
-		const { usage, window, buffer, free, breakdown } = this.#data;
-		const threshold = breakdown.thresholdTokens;
+		const { usage, window, buffer, free } = this.#data;
 		return [
 			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(window)} context · Read-only snapshot`,
-			"Active context on open · Base LLM projection",
-			"Not a transcript or final request · Excludes hooks and provider transforms",
 			`Used ${formatNumber(usage)} · Buffer ${formatNumber(buffer)} · Free ${formatNumber(free)}${usage > window ? ` · ${formatNumber(usage - window)} over window` : ""}`,
+			this.#allocationAvailable
+				? "Estimated category shares · Reopen to update"
+				: "Category estimates unavailable · Reopen to update",
+		];
+	}
+
+	#diagnostics(): string[] {
+		const { usage, breakdown } = this.#data;
+		const threshold = breakdown.thresholdTokens;
+		return [
 			threshold === undefined
 				? "Compaction off"
 				: `Compaction at ${formatNumber(threshold)} · ${formatNumber(Math.abs(threshold - usage))} ${usage > threshold ? "over threshold" : "until threshold"}`,
-			this.#allocationAvailable
-				? "Category shares: estimated allocation of Used · Reopen to update"
-				: "Category estimates unavailable · Original totals retained · Reopen to update",
+			...contextSnapcompactLines(breakdown),
 		];
 	}
 
@@ -334,9 +339,9 @@ export class ContextViewer implements Component {
 		const suffix = item.tokens === undefined ? " —" : ` ${formatNumber(item.tokens)} ${this.#share(item.tokens)}`;
 		const budget = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
 		const label = truncateToWidth(this.#safe(item.label).replace(/\n/g, " "), budget);
-		const name = selected ? theme.bold(label) : label;
+		const name = selected ? theme.fg(presentation.color, theme.bold(label)) : label;
 		return truncateToWidth(
-			`${prefix}${name}${" ".repeat(Math.max(0, budget - visibleWidth(label)))}${theme.fg("dim", suffix)}`,
+			`${prefix}${name}${" ".repeat(Math.max(0, budget - visibleWidth(label)))}${theme.fg(selected ? presentation.color : "dim", suffix)}`,
 			width,
 		);
 	}
@@ -392,7 +397,7 @@ export class ContextViewer implements Component {
 		this.#mapVisible = !!geometry;
 		const listWidth = geometry ? width - geometry.width - 3 : width;
 		const source = this.#overview.items.map(item => this.#legendLine(item, Math.max(0, listWidth - 1)));
-		const diagnostics = contextSnapcompactLines(this.#data.breakdown);
+		const diagnostics = this.#diagnostics();
 		for (const notice of this.#data.notices)
 			source.push(...wrapTextWithAnsi(theme.fg("warning", this.#safe(notice)), Math.max(1, listWidth - 1)));
 		for (const line of diagnostics)
@@ -653,15 +658,18 @@ export class ContextViewer implements Component {
 		if (this.#state === "overview") {
 			const items = this.#overview.items.map(item => {
 				const presentation = CONTEXT_PRESENTATION[item.id];
+				const selected = this.#overview.selectedKey === item.key;
+				const value =
+					item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`;
 				const label: TspSpan[] = [
 					span(`${item.child ? "  " : ""}${theme.symbol(presentation.symbol)} `, presentation.color),
-					span(this.#safe(item.label)),
+					span(this.#safe(item.label), selected ? `${presentation.color} strong` : undefined),
 				];
 				return node(
 					"item",
 					{
 						label,
-						value: item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`,
+						value: selected ? [span(value, presentation.color)] : value,
 						disabled: !item.category,
 					},
 					undefined,
@@ -690,8 +698,7 @@ export class ContextViewer implements Component {
 					);
 				children.push(row([col(grid), list], { gap: "lg" }));
 			} else children.push(list);
-			for (const line of contextSnapcompactLines(this.#data.breakdown))
-				children.push(text([span(line, "dim")], { wrap: "word" }));
+			for (const line of this.#diagnostics()) children.push(text([span(line, "dim")], { wrap: "word" }));
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
 			const body = children.splice(summary.length);
