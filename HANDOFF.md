@@ -3,9 +3,16 @@
 ## Status and permissions
 
 - Branch: `feat/context-viewer`. Check the working tree before editing; local commits authorized. Pushing, PR creation, external posts, and invitations to test require separate authorization.
-- ANSI viewer and whole-sequence base `convertToLlm` projection implemented; both packages have Changelog entries. No non-Tern implementation work remains in the current scope.
+- ANSI viewer and whole-sequence base `convertToLlm` projection implemented; both packages have Changelog entries. The requested follow-ups below are recorded only, not implemented.
 - Native multiline entry borders remain unimplemented; Native visuals remain unverified. All Tern work is deferred by the user until an environment is available, not waived or accepted as an appearance difference.
 - Maintainer-facing scope, conversion/cache semantics, behavioral contracts, verification commands/evidence, and PR prerequisites: [CONTEXT_VIEWER_PR_NOTES.md](CONTEXT_VIEWER_PR_NOTES.md). Read it before preparing a PR; it is not a final PR description.
+
+## Requested follow-ups (not implemented)
+
+1. **Entry timestamps:** show time on every entry in User Messages, Assistant Messages, Assistant Thinking, Tool Calls, and Tool Output, in previews and full content. Carry the originating message's stored `timestamp` into viewer-owned data; thinking/tool-call blocks inherit their assistant message's timestamp, while tool results/local executions use their own message timestamps. These are message-level times, not independently measured block execution times; never substitute the viewer-open time. Follow repository date/time formatting conventions.
+2. **Tool Output headings:** the apparent random suffix is `message.toolCallId`, used to correlate calls and results. Remove it from the heading; keep the tool name there and place `Call ID: <id>` on the next metadata line in dim text, preserving existing provenance. Apply to the aggregate and per-tool output pages, previews and full content; keep full IDs available without changing persisted messages or matching logic.
+
+Implementation is deferred by the current documentation-only request. When authorized, update ANSI and Native description paths, verify time attribution after splits/omissions, and exercise timestamp/ID readability, wrapping, scrolling, and Enter/Esc at normal/narrow widths. Tern visual verification remains deferred.
 
 ## Deferred Tern work
 
