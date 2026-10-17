@@ -64,6 +64,29 @@ Argument handling:
 - `--` ends flag parsing; everything after it is literal message text, even if it
   looks like a flag.
 
+### Interactive context viewer
+
+`/context` opens a read-only snapshot of the active context: the current system
+prompt, loaded instruction and skill fragments, active tools, and live messages
+projected through the shared base `convertToLlm` rules. Categories retain source
+attribution when conversion omits a message or splits it into multiple outputs.
+Interrupted-thinking continuity and tool-name canonicalization follow those same
+conversion rules.
+
+This is not the raw transcript, the last request, or an exact preview of the next
+provider payload. Opening the viewer does not run extension `context` or
+`before_provider_request` hooks, configured request transforms, or provider
+encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cwd
+injection are outside the base message projection. Category token counts and
+allocation shares are estimates, not exact final wire counts.
+
+Use the arrow keys or `j`/`k` to select and scroll, Enter to open content, and Esc
+to go back or close. Oversized entries scroll before selection advances; full
+content supports Home/End. The overview's `z` toggles Window/Fit when available,
+without changing the denominator used by percentages. Browsing does not submit
+the composer draft or interrupt a background turn. The snapshot stays unchanged
+while open; close and reopen it to refresh.
+
 ### Launch flags
 
 #### Session and workspace

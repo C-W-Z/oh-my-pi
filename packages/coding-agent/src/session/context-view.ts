@@ -1,5 +1,4 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { Message } from "@oh-my-pi/pi-ai";
 import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
@@ -160,104 +159,101 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		chronology.set(entry.id, timestamp);
 		add("tool-output", entry);
 	};
-	for (const [messageIndex, original] of session.messages.entries()) {
+	const sourceMessages = session.agent.state.messages;
+	convertToLlm(sourceMessages, (message, messageIndex, convertedIndex) => {
+		const original = sourceMessages[messageIndex]!;
 		const execution =
 			original.role === "bashExecution" ? "bash" : original.role === "pythonExecution" ? "python" : undefined;
-		// Convert local OMP messages only; preserve saved assistant blocks that replay policies may hide.
-		const messages: readonly Message[] =
-			original.role === "assistant" || original.role === "toolResult" ? [original] : convertToLlm([original]);
-		for (const [convertedIndex, message] of messages.entries()) {
-			const prefix = `${messageIndex}/${convertedIndex}`;
-			const info =
-				original.role !== message.role || "customType" in original
-					? `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`
-					: undefined;
-			if (message.role === "assistant") {
-				// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
-				const blockTokens = message.content.map(block => {
-					if (block.type === "text") return tokenizer.countTokens(block.text);
-					if (block.type === "toolCall") {
-						try {
-							return tokenizer.countTokens([block.name, JSON.stringify(block.arguments) ?? "null"]);
-						} catch {
-							return tokenizer.countTokens(block.name);
-						}
+		const prefix = `${messageIndex}/${convertedIndex}`;
+		const info =
+			original.role !== message.role || "customType" in original
+				? `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`
+				: undefined;
+		if (message.role === "assistant") {
+			// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
+			const blockTokens = message.content.map(block => {
+				if (block.type === "text") return tokenizer.countTokens(block.text);
+				if (block.type === "toolCall") {
+					try {
+						return tokenizer.countTokens([block.name, JSON.stringify(block.arguments) ?? "null"]);
+					} catch {
+						return tokenizer.countTokens(block.name);
 					}
-					if (block.type === "thinking" || block.type === "redactedThinking") return 0;
-					const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
-					return tokenizer.countMessages([isolated]);
-				});
-				const reasoningIndexes = message.content.flatMap((block, index) =>
-					block.type === "thinking" || block.type === "redactedThinking" ? [index] : [],
-				);
-				let reasoningBudget = Math.max(
-					0,
-					tokenizer.countMessages([message]) - blockTokens.reduce((sum, tokens) => sum + tokens, 0),
-				);
-				for (const [position, index] of reasoningIndexes.entries()) {
-					const block = message.content[index]!;
-					const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
-					const tokens =
-						position === reasoningIndexes.length - 1
-							? reasoningBudget
-							: Math.min(reasoningBudget, tokenizer.countMessages([isolated]));
-					blockTokens[index] = tokens;
-					reasoningBudget -= tokens;
 				}
-				let thinkingIndex = 0;
-				for (const [blockIndex, block] of message.content.entries()) {
-					const category =
+				if (block.type === "thinking" || block.type === "redactedThinking") return 0;
+				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
+				return tokenizer.countMessages([isolated]);
+			});
+			const reasoningIndexes = message.content.flatMap((block, index) =>
+				block.type === "thinking" || block.type === "redactedThinking" ? [index] : [],
+			);
+			let reasoningBudget = Math.max(
+				0,
+				tokenizer.countMessages([message]) - blockTokens.reduce((sum, tokens) => sum + tokens, 0),
+			);
+			for (const [position, index] of reasoningIndexes.entries()) {
+				const block = message.content[index]!;
+				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
+				const tokens =
+					position === reasoningIndexes.length - 1
+						? reasoningBudget
+						: Math.min(reasoningBudget, tokenizer.countMessages([isolated]));
+				blockTokens[index] = tokens;
+				reasoningBudget -= tokens;
+			}
+			let thinkingIndex = 0;
+			for (const [blockIndex, block] of message.content.entries()) {
+				const category =
+					block.type === "toolCall"
+						? "tool-calls"
+						: block.type === "thinking" || block.type === "redactedThinking"
+							? "assistant-thinking"
+							: "assistant-messages";
+				let text: string;
+				if (block.type === "toolCall") {
+					try {
+						text = `${block.name}\nCall ID: ${block.id}\n${JSON.stringify(block.arguments, null, 2)}`;
+					} catch {
+						text = `${block.name}\nCall ID: ${block.id}\n[Arguments unavailable]`;
+					}
+				} else text = contentText([block]);
+				add(category, {
+					id: `${category}/${prefix}/${blockIndex}`,
+					label:
 						block.type === "toolCall"
-							? "tool-calls"
-							: block.type === "thinking" || block.type === "redactedThinking"
-								? "assistant-thinking"
-								: "assistant-messages";
-					let text: string;
-					if (block.type === "toolCall") {
-						try {
-							text = `${block.name}\nCall ID: ${block.id}\n${JSON.stringify(block.arguments, null, 2)}`;
-						} catch {
-							text = `${block.name}\nCall ID: ${block.id}\n[Arguments unavailable]`;
-						}
-					} else text = contentText([block]);
-					add(category, {
-						id: `${category}/${prefix}/${blockIndex}`,
-						label:
-							block.type === "toolCall"
-								? block.name
-								: category === "assistant-thinking"
-									? `Thinking ${++thinkingIndex}/${reasoningIndexes.length} · message ${messageIndex + 1}`
-									: `${block.type} · message ${messageIndex + 1}`,
-						info,
-						text,
-						tokens: blockTokens[blockIndex]!,
-					});
-				}
-			} else if (message.role === "toolResult" || execution) {
-				const name = original.role === "toolResult" ? original.toolName : execution!;
-				const call = message.role === "toolResult" ? message.toolCallId : undefined;
-				addOutput(
-					name,
-					{
-						id: `tool-output/${prefix}`,
-						label: `${name}${call ? ` · ${call}` : ""}`,
-						info,
-						text: contentText(message.content),
-						tokens: tokenizer.countMessages([message]),
-					},
-					message.timestamp,
-				);
-			} else {
-				add("user-messages", {
-					id: `user-messages/${prefix}`,
-					label: `${message.role} · message ${messageIndex + 1}`,
+							? block.name
+							: category === "assistant-thinking"
+								? `Thinking ${++thinkingIndex}/${reasoningIndexes.length} · message ${messageIndex + 1}`
+								: `${block.type} · message ${messageIndex + 1}`,
+					info,
+					text,
+					tokens: blockTokens[blockIndex]!,
+				});
+			}
+		} else if (message.role === "toolResult" || execution) {
+			const name = message.role === "toolResult" ? message.toolName : execution!;
+			const call = message.role === "toolResult" ? message.toolCallId : undefined;
+			addOutput(
+				name,
+				{
+					id: `tool-output/${prefix}`,
+					label: `${name}${call ? ` · ${call}` : ""}`,
 					info,
 					text: contentText(message.content),
 					tokens: tokenizer.countMessages([message]),
-				});
-			}
+				},
+				message.timestamp,
+			);
+		} else {
+			add("user-messages", {
+				id: `user-messages/${prefix}`,
+				label: `${message.role} · message ${messageIndex + 1}`,
+				info,
+				text: contentText(message.content),
+				tokens: tokenizer.countMessages([message]),
+			});
 		}
-	}
+	});
 	const chronological = (a: ContextViewEntry, b: ContextViewEntry): number =>
 		(chronology.get(a.id) ?? 0) - (chronology.get(b.id) ?? 0);
 	output.entries.sort(chronological);

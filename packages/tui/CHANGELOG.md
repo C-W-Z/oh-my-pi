@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Context Viewer identifies its snapshot as active context projected through base LLM conversion, rather than a transcript or final provider request.
 - Context Viewer entries use theme-colored bracketed headings and dim token counts; previews show omitted source-line counts, content-opening hints appear only on the selected entry, and skill input is fully scrollable.
 
 ### Fixed

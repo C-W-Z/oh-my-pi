@@ -313,6 +313,8 @@ export class ContextViewer implements Component {
 		const threshold = breakdown.thresholdTokens;
 		return [
 			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(window)} context · Read-only snapshot`,
+			"Active context on open · Base LLM projection",
+			"Not a transcript or final request · Excludes hooks and provider transforms",
 			`Used ${formatNumber(usage)} · Buffer ${formatNumber(buffer)} · Free ${formatNumber(free)}${usage > window ? ` · ${formatNumber(usage - window)} over window` : ""}`,
 			threshold === undefined
 				? "Compaction off"

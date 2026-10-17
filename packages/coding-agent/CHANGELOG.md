@@ -8,6 +8,7 @@
 
 ### Changed
 
+- `/context` shows the active context on open through shared base LLM conversion, preserving source attribution across omitted and split messages, interrupted-thinking continuity, and canonical tool names.
 - Context Viewer numbers Assistant Thinking blocks in message order and lists encoded and plaintext thinking separately.
 - Context Viewer omits redundant role labels beneath user messages, assistant messages, thinking, tool calls, and tool output while retaining converted-message provenance.
 - With a first-party Anthropic model on the official API selected, the interactive UI opens the API connection at startup, on model switch, and when you start typing, so the next turn skips connection setup; third-party gateways and custom endpoints are never probed ([#16044](https://github.com/can1357/oh-my-pi/pull/16044) by [@H4vC](https://github.com/H4vC))
