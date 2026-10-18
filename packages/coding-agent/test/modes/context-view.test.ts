@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { type } from "@oh-my-pi/omptype";
 import { Agent, type AgentMessage, type AgentTool } from "@oh-my-pi/pi-agent-core";
-import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, Model } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { Settings } from "../../src/config/settings";
 import { AgentSession } from "../../src/session/agent-session";
@@ -42,6 +42,7 @@ function sessionWith(
 		messages?: AgentMessage[];
 		tools?: AgentTool[];
 		settings?: Settings;
+		model?: Model;
 		rebuild?: () => Promise<{ systemPrompt: string[]; sources?: SystemPromptSources }>;
 	} = {},
 ): AgentSession {
@@ -49,7 +50,7 @@ function sessionWith(
 	const session = new AgentSession({
 		agent: new Agent({
 			initialState: {
-				model,
+				model: options.model ?? model,
 				systemPrompt: options.prompt ?? ["opaque system"],
 				tools,
 				messages: options.messages ?? [],
@@ -212,6 +213,60 @@ describe("context snapshot", () => {
 		expect(category(data, "tool-calls").entries[0]?.text).toContain('"path": "notes.txt"');
 		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countMessages([message]));
 		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-encoded-thinking|private-ciphertext/);
+	});
+
+	it("counts payload-only reasoning safely and does not duplicate it beside explicit thinking", () => {
+		const reader = getBundledModel<"openai-codex-responses">("openai-codex", "gpt-6.1-sol")!;
+		const reasoning = { type: "reasoning", id: "rs_private", summary: [], encrypted_content: "private-ciphertext" };
+		const text = "visible answer";
+		const message: AssistantMessage = {
+			...reply([{ type: "text", text }]),
+			api: reader.api,
+			provider: reader.provider,
+			model: reader.id,
+			stopReason: "stop",
+			providerPayload: {
+				type: "openaiResponsesHistory",
+				provider: reader.provider,
+				dt: true,
+				items: [reasoning, { type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+			},
+			usage: { ...reply([]).usage, output: 6_000, totalTokens: 6_000, reasoningTokens: 1_000 },
+		};
+		const session = sessionWith({ model: reader, prompt: [], messages: [message] });
+		const before = structuredClone(session.messages);
+		const payloadOnly = buildSessionContextView(session);
+		const visibleTokens = session.agent.tokenizer.countTokens(text);
+		const thinking = category(payloadOnly, "assistant-thinking");
+		expect(thinking.tokens).toBe(1_000);
+		expect(thinking.entries).toEqual([expect.objectContaining({ tokens: 1_000, timestamp: message.timestamp })]);
+		expect(category(payloadOnly, "assistant-messages").tokens).toBe(visibleTokens);
+		expect(payloadOnly.estimatedTokens).toBe(visibleTokens + 1_000);
+		expect(JSON.stringify(payloadOnly)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
+		expect(session.messages).toEqual(before);
+
+		const explicit: AssistantMessage = {
+			...message,
+			content: [
+				{ type: "thinking", thinking: "", thinkingSignature: JSON.stringify(reasoning) },
+				{ type: "text", text },
+			],
+		};
+		const withBlock = buildSessionContextView(sessionWith({ model: reader, prompt: [], messages: [explicit] }));
+		expect(category(withBlock, "assistant-thinking").entries).toHaveLength(1);
+		expect(category(withBlock, "assistant-thinking").tokens).toBe(1_000);
+		expect(withBlock.estimatedTokens).toBe(payloadOnly.estimatedTokens);
+		expect(JSON.stringify(withBlock)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
+
+		session.agent.setModel(getBundledModel("openai-codex", "gpt-6-sol")!);
+		const changedReader = buildSessionContextView(session);
+		expect(category(changedReader, "assistant-thinking").entries).toEqual([]);
+		expect(changedReader.estimatedTokens).toBe(session.agent.tokenizer.countTokens(text));
+
+		session.agent.setModel({ ...reader, compat: { ...reader.compat, filterReasoningHistory: true } });
+		const filtered = buildSessionContextView(session);
+		expect(category(filtered, "assistant-thinking").entries).toEqual([]);
+		expect(filtered.estimatedTokens).toBe(session.agent.tokenizer.countTokens(text));
 	});
 
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {

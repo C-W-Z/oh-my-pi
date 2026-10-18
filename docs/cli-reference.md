@@ -80,6 +80,12 @@ encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cw
 injection are outside the base message projection. Category token counts and
 allocation shares are estimates, not exact final wire counts.
 
+Assistant Thinking includes reasoning retained only in replayable provider
+payloads, displayed as an encoded-thinking placeholder without exposing payloads
+or signatures. Counts follow the active reader's replay-aware tokenizer, exclude
+reasoning it filters or cannot replay, and do not double-count payload reasoning
+already attributed to explicit thinking blocks.
+
 Use the arrow keys or `j`/`k` to select and scroll, Enter to open content, and Esc
 to go back or close. Oversized entries scroll before selection advances; full
 content supports Home/End. The overview's `z` toggles Window/Fit when available,

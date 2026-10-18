@@ -201,6 +201,17 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				blockTokens[index] = tokens;
 				reasoningBudget -= tokens;
 			}
+			// Preserve the tokenizer's replay budget when no explicit thinking block carries it; never read or display the raw payload.
+			if (reasoningBudget > 0) {
+				add("assistant-thinking", {
+					id: `assistant-thinking/${prefix}/payload`,
+					label: `Thinking 1/1 · message ${messageIndex + 1}`,
+					info,
+					text: "[Encoded thinking]",
+					timestamp: original.timestamp,
+					tokens: reasoningBudget,
+				});
+			}
 			let thinkingIndex = 0;
 			for (const [blockIndex, block] of message.content.entries()) {
 				const category =
