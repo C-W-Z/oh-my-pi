@@ -17,7 +17,10 @@ Tern is not available in the current environment, so the Native interface has no
 Previously recorded verification from the implementation/review notes (not rerun during this documentation and changelog consolidation):
 
 - Functional and adjacent regression checks: 141 passed, 0 failed across 11 test files; package-local `bun check` passed for `packages/coding-agent` and `packages/tui`.
-- Prompt/template compatibility checks: 94 passed, 1 failed across 8 test files. `packages/coding-agent/test/system-prompt-template.test.ts:150` expected a user-level `SYSTEM.md` but received `undefined`. The failure is in an unmodified discovery path; its relationship to this branch and baseline has not been established. Do not report all related tests as passing.
+- Prompt/template compatibility checks: 94 passed, 1 failed across 8 test files. `packages/coding-agent/test/system-prompt-template.test.ts:150` expected a user-level `SYSTEM.md` but received `undefined`. Do not report all related tests as passing.
+  - The discovery fixture changes home without isolating `PI_CODING_AGENT_DIR`. A separate temporary-directory smoke reproduced `undefined` with an override pointing elsewhere and correctly selected `SYSTEM.md` when the search directory matched the fixture.
+  - Related upstream work: [#14013](https://github.com/can1357/oh-my-pi/pull/14013) includes override isolation in the same `withDiscoveryHome()` helper, but is closed without merging; it is not a shipped fix.
+  - The relevant discovery, resolver, and test code is unchanged from branch base `d060e142cc`. The original failing run's execution order is not recorded, and the full compatibility suite has not been run on that baseline; the evidence does not establish which preceding test or environment supplied the override in that run.
 - A later targeted follow-up recorded 34 passing, 0 failing tests across `context-viewer.test.ts` and `context-view.test.ts`, with both package-local `bun check` commands passing.
 - Recorded Native checks exercised activation and reconciliation state, not Tern visuals. Recorded CLI/TUI checks used ConPTY; they are not substitutes for the missing Tern check.
 
