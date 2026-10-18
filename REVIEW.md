@@ -117,6 +117,20 @@ LSP references 确认：
 
 这些 symbols 存在可导入的 package 路径。仓库内无 caller 不等于外部无 consumer；移除前需明确 API 影响，更新受影响 callers、tests 和 Changelog。不能把整份 `context-usage.ts` 删除，也不应为了旧画面继续维护第二套 renderer。
 
+### 公开 API 决策（需 maintainer 确认）
+
+本节说的“旧 API”是 TUI 包提供的旧 Context 画面入口：`ContextUsageView`、`renderContextUsage`、`describeContextUsage` 和 `contextUsageHead`。它们目前只剩定义和 tests 在用。仓库里没找到产品代码还在调用它们，但其他项目可能直接从 `@oh-my-pi/pi-tui/status-line/context-usage` 导入；仓库搜索无法确认外部使用情况。
+
+旧画面只显示分类和 token 总数；当前 `/context` 还显示分类里的条目和正文。新数据可以交给旧画面，但旧画面仍只显示总数。
+
+CLI 用户可以继续用 `/context` 打开新画面。新 viewer 的代码虽可通过 package 子路径导入，但是否承诺它是稳定的外部 API，与本次清理旧 UI 是两件事；目前没有证据表明需要新增这项承诺，因此不把它列为清理选项。
+
+请 maintainer 选择：
+- **保留旧兼容性**：保留旧 API 和旧画面；本项不再清理这套旧 UI。
+- **彻底移除旧 API 和旧画面**：让 CLI 继续使用现在的 `/context`，只删除仓库内已无调用的旧导出和实现；保留新 `/context` 与共享计算能力。外部消费者若使用旧导出会受影响，需在 `Breaking Changes` 说明。
+
+仓库内没有旧 API 的产品代码调用，但无法确认外部消费者。无论选择哪项，都保留共享计算、token estimates、compaction boundaries 和新 `/context` 仍使用的 diagnostics。
+
 ## 6. 准备 PR 时再移除本地材料
 
 **性质：提交范围建议，不是运行时缺陷；按用户安排留到最后。**
