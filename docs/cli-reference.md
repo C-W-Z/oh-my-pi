@@ -94,18 +94,26 @@ or signatures. Counts follow the active reader's replay-aware tokenizer, exclude
 reasoning it filters or cannot replay, and do not double-count payload reasoning
 already attributed to explicit thinking blocks.
 
-Use the arrow keys or `j`/`k` to select and scroll, Enter to open content, and Esc
-to go back or close. Oversized entries scroll before selection advances; full
-content supports Home/End. The overview's `z` toggles Window/Fit when available,
-without changing the denominator used by percentages. Browsing does not submit
-the composer draft or interrupt a background turn. The snapshot stays unchanged
-while open; close and reopen it to refresh.
+Use only the configured `tui.select.up` / `tui.select.down` keys (arrow keys by
+default) to select and scroll. To use `k`/`j`, bind them to these actions in
+`keybindings.yml`; they are not fixed aliases. The footer shows each action's
+primary bound key and omits unbound actions. Open content with
+`tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
+(Esc or Ctrl+C by default). Enter and Esc are not fixed aliases.
+Oversized entries scroll before selection advances; full content supports
+Home/End. In the overview, `tui.context.toggleFit` (`z` by default) toggles
+Window/Fit when available, without changing the denominator used by percentages.
+These bindings accept multiple keys or `[]` to disable the keyboard action.
+Browsing does not submit the composer draft or interrupt a background turn. The
+snapshot stays unchanged while open; close and reopen it to refresh.
 
-Enter opens the selected entry's full content even when its preview fits. Native
-category previews use wrapping text blocks: click a block to select it and
-double-click to open it. Back or Esc from full content restores the category's
-selection and preview position. Empty categories remain accessible; categories
-with one entry open full content directly.
+The confirm action opens the selected entry's full content even when its preview
+fits. Native category previews use wrapping text blocks: click a block to select
+it and double-click to open it. Back or the configured cancel action from full
+content restores the category's selection and preview position. Native buttons
+and activation remain available when the corresponding keyboard actions are
+unbound. Empty categories remain accessible; categories with one entry open full
+content directly.
 
 ### Launch flags
 

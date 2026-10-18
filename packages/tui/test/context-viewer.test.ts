@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as os from "node:os";
 import type { TspText } from "@oh-my-pi/pi-wire";
+import {
+	getKeybindings,
+	KeybindingsManager,
+	type KeybindingsConfig,
+	setKeybindings,
+	TUI_KEYBINDINGS,
+} from "../src/keybindings";
 import type { NativeNode } from "../src/native/node";
 import { TspDocument } from "../src/native/apply";
 import { Reconciler } from "../src/native/reconcile";
@@ -138,6 +145,149 @@ function selected(root: NativeNode): string | null | undefined {
 }
 
 describe("ContextViewer navigation", () => {
+	const navigationBindings: {
+		name: string;
+		bindings: KeybindingsConfig;
+		up?: string;
+		down?: string;
+	}[] = [
+		{ name: "default arrows", bindings: {}, up: "\x1b[A", down: "\x1b[B" },
+		{
+			name: "remapped control keys",
+			bindings: { "tui.select.up": "ctrl+p", "tui.select.down": "ctrl+n" },
+			up: "\x10",
+			down: "\x0e",
+		},
+		{
+			name: "explicit j/k bindings",
+			bindings: { "tui.select.up": "k", "tui.select.down": "j" },
+			up: "k",
+			down: "j",
+		},
+		{ name: "unbound navigation", bindings: { "tui.select.up": [], "tui.select.down": [] } },
+	];
+	for (const { name, bindings, up, down } of navigationBindings) {
+		it(`captures and navigates only with configured keys: ${name}`, () => {
+			const previousBindings = getKeybindings();
+			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, bindings));
+			const h = harness();
+			try {
+				h.render();
+				for (const key of ["\x1b[A", "\x1b[B", "\x10", "\x0e", "k", "j"]) {
+					select(h.viewer, "instruction-files", false);
+					expect(h.viewer.capturesInput(key)).toBe(key === up || key === down);
+					h.viewer.handleInput(key);
+					expect(selected(h.viewer.describe(cx))).toBe(
+						key === up ? "system-prompt" : key === down ? "skills" : "instruction-files",
+					);
+				}
+			} finally {
+				h.viewer.dispose();
+				setKeybindings(previousBindings);
+			}
+		});
+	}
+	it("shows the confirm hint only on pages where confirm opens content", () => {
+		const h = harness();
+		try {
+			expect(h.render().at(-2)).toContain("open");
+			select(h.viewer, "tool-output");
+			expect(h.render().at(-2)).toContain("open");
+			h.viewer.handleInput("\r");
+			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+			expect(h.render().at(-2)).not.toContain("open");
+			h.viewer.handleInput("\x1b");
+			expect(h.render().at(-2)).toContain("open");
+			h.viewer.handleInput("\x1b");
+			select(h.viewer, "tool-output/read");
+			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+			expect(h.render().at(-2)).not.toContain("open");
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
+	it("remaps opening, returning and zoom without retaining Enter, Escape or z aliases", () => {
+		const previousBindings = getKeybindings();
+		const h = harness();
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.select.confirm": "o",
+				"tui.select.cancel": "b",
+				"tui.context.toggleFit": "f",
+			}),
+		);
+		try {
+			h.render();
+			for (const key of ["\r", "\x1b", "z"]) {
+				expect(h.viewer.capturesInput(key)).toBe(false);
+				h.viewer.handleInput(key);
+			}
+			expect(h.closed()).toBe(0);
+			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+			expect(h.render()[0]).toContain("Window");
+			for (const key of ["o", "b", "f"]) expect(h.viewer.capturesInput(key)).toBe(true);
+			h.viewer.handleInput("f");
+			expect(h.render()[0]).toContain("Fit");
+			h.viewer.handleInput("f");
+			expect(h.render()[0]).toContain("Window");
+			select(h.viewer, "tool-output", false);
+			h.viewer.handleInput("o");
+			expect(selected(h.viewer.describe(cx))).toBe("result/0");
+			expect(h.viewer.capturesInput("f")).toBe(false);
+			h.viewer.handleInput("f");
+			h.viewer.handleInput("o");
+			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+			h.viewer.handleInput("b");
+			expect(selected(h.viewer.describe(cx))).toBe("result/0");
+			h.viewer.handleInput("b");
+			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
+			expect(h.render()[0]).toContain("Window");
+			h.viewer.handleInput("b");
+			expect(h.closed()).toBe(1);
+		} finally {
+			h.viewer.dispose();
+			setKeybindings(previousBindings);
+		}
+	});
+
+	it("keeps Native open, Back, zoom and Close usable when their keyboard actions are unbound", () => {
+		const previousBindings = getKeybindings();
+		const h = harness();
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.select.confirm": [],
+				"tui.select.cancel": [],
+				"tui.context.toggleFit": [],
+			}),
+		);
+		try {
+			h.render();
+			for (const key of ["\r", "\x1b", "\x03", "z"]) {
+				expect(h.viewer.capturesInput(key)).toBe(false);
+				h.viewer.handleInput(key);
+			}
+			expect(h.closed()).toBe(0);
+			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+			expect(h.render()[0]).toContain("Window");
+			select(h.viewer, "tool-output");
+			h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+			expect(selected(h.viewer.describe(cx))).toBe("result/0");
+			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
+			h.viewer.describe(cx);
+			h.viewer.handleNativeEvent({ type: "action", key: "zoom", act: "zoom", mods: [] });
+			expect(h.render()[0]).toContain("Fit");
+			h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
+			expect(h.closed()).toBe(1);
+		} finally {
+			h.viewer.dispose();
+			setKeybindings(previousBindings);
+		}
+	});
+
 	it("reaches saved output tail and restores preview selection and offset through Back", () => {
 		const h = harness();
 		h.render();
@@ -175,7 +325,7 @@ describe("ContextViewer navigation", () => {
 		h.viewer.handleInput("\x1b[F");
 		h.render();
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
-		h.viewer.handleInput("j");
+		h.viewer.handleInput("\x1b[B");
 		h.render();
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
 		h.resize(12);
@@ -244,9 +394,9 @@ describe("ContextViewer navigation", () => {
 		expect(body.k).toBe("col");
 		expect(body.scroll).toBeDefined();
 		for (const [key, by] of [
-			["j", "line-down"],
+			["\x1b[B", "line-down"],
 			["\x1b[6~", "page-down"],
-			["k", "line-up"],
+			["\x1b[A", "line-up"],
 			["\x1b[5~", "page-up"],
 		] as const) {
 			h.viewer.handleInput(key);
@@ -254,7 +404,7 @@ describe("ContextViewer navigation", () => {
 			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual([by]);
 			expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
 		}
-		h.viewer.handleInput("j");
+		h.viewer.handleInput("\x1b[B");
 		reconcile();
 		const before = h.render(48);
 		h.viewer.handleInput("\r");
@@ -270,7 +420,7 @@ describe("ContextViewer navigation", () => {
 		reconcile();
 		let changed = false;
 		for (let step = 0; step < 80; step++) {
-			h.viewer.handleInput("j");
+			h.viewer.handleInput("\x1b[B");
 			const ops = reconcile();
 			if (selected(h.viewer.describe(nativeCx)) === "skill/1") {
 				expect(ops.some(op => op[0] === "scroll")).toBe(false);
@@ -352,7 +502,7 @@ describe("ContextViewer preview boundaries", () => {
 		select(h.viewer, "skills");
 		let screen = h.render(48).join("\n");
 		for (let index = 0; index < 70 && !screen.includes("skill-description-tail"); index++) {
-			h.viewer.handleInput("j");
+			h.viewer.handleInput("\x1b[B");
 			screen = h.render(48).join("\n");
 		}
 		expect(screen).toContain("skill-description-tail");
@@ -791,7 +941,7 @@ describe("ContextViewer presentation", () => {
 		expect(before.find(line => line.includes("first title"))).toContain("┃ ");
 		let scrolled = before;
 		for (let index = 0; index < before.length && scrolled.some(line => line.includes("first title")); index++) {
-			h.viewer.handleInput("j");
+			h.viewer.handleInput("\x1b[B");
 			scrolled = h.render(48);
 		}
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
@@ -815,7 +965,6 @@ describe("ContextViewer presentation", () => {
 				const lines = h.render(48);
 				expect(lines).toHaveLength(height);
 				expect(lines.at(-3)).toMatch(/^├.*┤$/);
-				expect(lines.at(-2)).toContain("Esc");
 				expect(lines.at(-1)).toMatch(/^╰.*╯$/);
 				expect(lines.every(line => visibleWidth(line) <= 48)).toBe(true);
 			}

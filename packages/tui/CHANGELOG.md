@@ -7,6 +7,7 @@
 - Added an ANSI and native Context Viewer with category navigation, entry previews, and scrollable full-content inspection.
 - Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings.
 - Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints.
+- Added `tui.context.toggleFit` to remap or disable the Context Viewer Window/Fit keyboard shortcut.
 
 ### Changed
 
@@ -16,6 +17,7 @@
 ### Fixed
 
 - Fixed Native Context Viewer multiline previews, full-content activation, and entry scrolling while preserving selection and the return position.
+- Fixed Context Viewer navigation, open, back/close, and Window/Fit shortcuts and hints to honor configured or unbound keys without fixed aliases; the full-content page no longer advertises an inactive open action.
 
 ## [18.11.3] - 2026-10-16
 

@@ -6,6 +6,7 @@ import {
 	type ContextCategoryId,
 	type ContextPresentationId,
 } from "../chrome/context-presentation";
+import { editorKey } from "../chrome/keybinding-hints";
 import { OverlayPanel, PanelDivider, PanelRows } from "../chrome/overlay-box";
 import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
@@ -574,16 +575,19 @@ export class ContextViewer implements Component {
 					: this.#fullLines(this.#width, this.#height);
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
-		const zoom = this.#canZoom ? " · z Window/Fit" : "";
-		this.#footer.setLines([
-			truncateToWidth(
-				theme.fg(
-					"dim",
-					`↑↓ j/k select/scroll · Enter open · Esc ${this.#state === "overview" ? "close" : "back"}${zoom}`,
-				),
-				this.#width,
-			),
-		]);
+		const navigation = [editorKey("tui.select.up"), editorKey("tui.select.down")].filter(Boolean).join("/");
+		const confirm = this.#state === "entry" ? "" : editorKey("tui.select.confirm");
+		const cancel = editorKey("tui.select.cancel");
+		const zoom = this.#canZoom ? editorKey("tui.context.toggleFit") : "";
+		const hints = [
+			navigation && `${navigation} select/scroll`,
+			confirm && `${confirm} open`,
+			cancel && `${cancel} ${this.#state === "overview" ? "close" : "back"}`,
+			zoom && `${zoom} Window/Fit`,
+		]
+			.filter(Boolean)
+			.join(" · ");
+		this.#footer.setLines([truncateToWidth(theme.fg("dim", hints), this.#width)]);
 		const rendered = this.#panel.render(width);
 		if (terminalRows >= 4) return rendered;
 		if (terminalRows === 3) return [rendered[0]!, rendered[rendered.length - 2]!, rendered[rendered.length - 1]!];
@@ -660,25 +664,25 @@ export class ContextViewer implements Component {
 	capturesInput(data: string): boolean {
 		return (
 			matchesSelectCancel(data) ||
-			matchesKey(data, "escape") ||
 			matchesSelectUp(data) ||
 			matchesSelectDown(data) ||
 			matchesSelectPageUp(data) ||
 			matchesSelectPageDown(data) ||
 			getKeybindings().matches(data, "tui.select.confirm") ||
-			(["home", "end", "enter", "j", "k"] as const).some(key => matchesKey(data, key)) ||
-			(data === "z" && this.#canZoom)
+			matchesKey(data, "home") ||
+			matchesKey(data, "end") ||
+			(this.#canZoom && getKeybindings().matches(data, "tui.context.toggleFit"))
 		);
 	}
 
 	handleInput(data: string): void {
 		if (this.#disposed) return;
 		let by: TspScrollBy | undefined;
-		if (matchesSelectCancel(data) || matchesKey(data, "escape")) this.#back();
-		else if (getKeybindings().matches(data, "tui.select.confirm") || matchesKey(data, "enter")) this.#activate();
-		else if (matchesSelectUp(data) || data === "k") {
+		if (matchesSelectCancel(data)) this.#back();
+		else if (getKeybindings().matches(data, "tui.select.confirm")) this.#activate();
+		else if (matchesSelectUp(data)) {
 			this.#navigate(-1, "line-up");
-		} else if (matchesSelectDown(data) || data === "j") {
+		} else if (matchesSelectDown(data)) {
 			this.#navigate(1, "line-down");
 		} else if (matchesSelectPageUp(data)) {
 			this.#navigate(-Math.max(1, this.#height - 1), "page-up");
@@ -699,7 +703,7 @@ export class ContextViewer implements Component {
 				return;
 			}
 			by = last ? "end" : "start";
-		} else if (data === "z" && this.#canZoom) this.#fit = !this.#fit;
+		} else if (this.#canZoom && getKeybindings().matches(data, "tui.context.toggleFit")) this.#fit = !this.#fit;
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
 		this.#requestRender();
 	}
@@ -836,7 +840,7 @@ export class ContextViewer implements Component {
 		if (event.type === "action") {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
-			else if (event.act === "zoom") this.handleInput("z");
+			else if (event.act === "zoom" && this.#canZoom) this.#fit = !this.#fit;
 			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
 				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
 				if (!entry) return;
