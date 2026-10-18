@@ -1071,34 +1071,32 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		!resolvedCustomPrompt && xdevTools.length > 0 && rendered.includes("xd://")
 			? xdevTools.map(mounted => mounted.name)
 			: undefined;
-	const sources: SystemPromptSources | undefined = resolvedCustomPrompt
-		? undefined
-		: {
-				blocks: systemPrompt.slice(),
-				sources: [
-					...renderedContextFiles.map((file, index): SystemPromptSource => {
-						const fragment = prompt.format(file.contextViewerFragment, { renderPhase: "post-render" }).trim();
-						return {
-							id: `instruction-${index}`,
-							blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
-							kind: "instruction-files",
-							label: file.path,
-							path: file.path,
-							fragment,
-						};
-					}),
-					...renderedSkillItems.map((skill, index): SystemPromptSource => {
-						const fragment = prompt.format(skill.contextViewerFragment, { renderPhase: "post-render" }).trim();
-						return {
-							id: `skill-${index}`,
-							blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
-							kind: "skills",
-							label: skill.name,
-							path: skill.filePath,
-							fragment,
-						};
-					}),
-				].filter(source => source.blockIndex >= 0),
-			};
+	const sources: SystemPromptSources = {
+		blocks: systemPrompt.slice(),
+		sources: [
+			...renderedContextFiles.map((file, index): SystemPromptSource => {
+				const fragment = prompt.format(file.contextViewerFragment, { renderPhase: "post-render" }).trim();
+				return {
+					id: `instruction-${index}`,
+					blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
+					kind: "instruction-files",
+					label: file.path,
+					path: file.path,
+					fragment,
+				};
+			}),
+			...renderedSkillItems.map((skill, index): SystemPromptSource => {
+				const fragment = prompt.format(skill.contextViewerFragment, { renderPhase: "post-render" }).trim();
+				return {
+					id: `skill-${index}`,
+					blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
+					kind: "skills",
+					label: skill.name,
+					path: skill.filePath,
+					fragment,
+				};
+			}),
+		].filter(source => source.blockIndex >= 0),
+	};
 	return { systemPrompt, xdevCatalogNames, sources };
 }

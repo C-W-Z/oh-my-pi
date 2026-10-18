@@ -170,6 +170,29 @@ describe("context snapshot", () => {
 		]);
 	});
 
+	it("attributes instruction files present in a literal custom prompt without double-counting them", async () => {
+		const built = await buildSystemPrompt({
+			cwd: import.meta.dir,
+			customPrompt: "Literal custom prompt.",
+			personality: "none",
+			activeRepoContext: null,
+			contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
+			skills: [],
+		});
+		const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources, tools: [tool("read")] });
+		const data = buildSessionContextView(session);
+		const instructionEntries = category(data, "instruction-files").entries;
+		const systemPromptText = category(data, "system-prompt")
+			.entries.map(entry => entry.text)
+			.join("\n");
+
+		expect(instructionEntries).toHaveLength(1);
+		expect(instructionEntries[0]?.text).toContain("Unique instruction body");
+		expect(systemPromptText).toContain("Literal custom prompt.");
+		expect(systemPromptText).not.toContain("Unique instruction body");
+		expect(data.notices).toEqual([]);
+	});
+
 	it("keeps rewritten or ambiguous prompt fragments in System Prompt, pairing repeated blocks by occurrence", () => {
 		const sources: SystemPromptSources = {
 			blocks: ["prefix FILE suffix", "prefix FILE suffix"],

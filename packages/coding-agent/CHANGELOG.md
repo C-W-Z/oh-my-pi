@@ -15,6 +15,7 @@
 ### Fixed
 
 - Fixed `/context` omitting payload-only replayed reasoning from Assistant Thinking, raw token estimates, and allocation shares.
+- Fixed `/context` attributing instruction files that appear in a literal custom prompt to System Prompt instead of Instruction Files.
 
 ## [18.11.3] - 2026-10-16
 
