@@ -80,6 +80,13 @@ encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cw
 injection are outside the base message projection. Category token counts and
 allocation shares are estimates, not exact final wire counts.
 
+System Prompt entries replace attributed instruction-file and skill fragments
+with `[Shown in <category>: <source>]` markers at their original positions.
+The fragments remain in the provider-facing system prompt and are displayed in
+their own categories, including when a literal custom prompt is active. Markers
+are viewer-only and do not contribute to token estimates. Unmatched or ambiguous
+fragments stay in System Prompt rather than being assigned a guessed source.
+
 Assistant Thinking includes reasoning retained only in replayable provider
 payloads, displayed as an encoded-thinking placeholder without exposing payloads
 or signatures. Counts follow the active reader's replay-aware tokenizer, exclude

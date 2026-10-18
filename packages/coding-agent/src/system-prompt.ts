@@ -25,6 +25,7 @@ import activeRepoContextTemplate from "./prompts/system/active-repo-context.md" 
 import customSystemPromptTemplate from "./prompts/system/custom-system-prompt.md" with { type: "text" };
 import contextFileTemplate from "./prompts/system/context-file.md" with { type: "text" };
 import contextSkillTemplate from "./prompts/system/context-skill.md" with { type: "text" };
+import customContextSkillTemplate from "./prompts/system/custom-context-skill.md" with { type: "text" };
 import defaultPersonality from "./prompts/system/personalities/default.md" with { type: "text" };
 import friendlyPersonality from "./prompts/system/personalities/friendly.md" with { type: "text" };
 import pragmaticPersonality from "./prompts/system/personalities/pragmatic.md" with { type: "text" };
@@ -629,6 +630,7 @@ export interface BuildSystemPromptResult {
 /** Static wrapper; compiled (not rendered) so user-authored Markdown passes through byte-for-byte. */
 const renderContextFile = prompt.compile(contextFileTemplate.trimEnd());
 const renderContextSkill = prompt.compile(contextSkillTemplate.trimEnd());
+const renderCustomContextSkill = prompt.compile(customContextSkillTemplate.trimEnd());
 const renderUserAppend = prompt.compile(userAppendPromptTemplate.trimEnd());
 
 /**
@@ -976,9 +978,10 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		...file,
 		contextViewerFragment: renderContextFile(file),
 	}));
+	const renderSkill = resolvedCustomPrompt ? renderCustomContextSkill : renderContextSkill;
 	const renderedSkillItems = filteredSkills.map(skill => ({
 		...skill,
-		contextViewerFragment: renderContextSkill({ name: skill.name, description: skill.description }),
+		contextViewerFragment: renderSkill({ name: skill.name, description: skill.description }),
 	}));
 	const environment = getEnvironmentInfo();
 	const data = {

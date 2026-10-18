@@ -155,6 +155,14 @@ describe("context snapshot", () => {
 				.entries.map(entry => entry.text)
 				.join("\n"),
 		).not.toContain("Unique instruction body");
+		const systemEntry = category(data, "system-prompt").entries[0]!;
+		const skillEntry = category(data, "skills").entries[0]!;
+		expect(systemEntry.text).toContain("<skills>\n[Shown in Skills: fixture]\n</skills>");
+		expect(built.systemPrompt[0]).toContain(skillEntry.text);
+		expect(built.systemPrompt[0]).not.toContain("[Shown in");
+		expect(systemEntry.tokens).toBe(
+			session.agent.tokenizer.countTokens(built.systemPrompt[0]!.replace(skillEntry.text, "")),
+		);
 		expect(file).not.toHaveBeenCalled();
 		expect(data.categories.map(category => category.id)).toEqual([
 			"system-prompt",
@@ -170,14 +178,22 @@ describe("context snapshot", () => {
 		]);
 	});
 
-	it("attributes instruction files present in a literal custom prompt without double-counting them", async () => {
+	it("attributes instruction files and XML skills delivered with a literal custom prompt without double-counting", async () => {
 		const built = await buildSystemPrompt({
 			cwd: import.meta.dir,
 			customPrompt: "Literal custom prompt.",
 			personality: "none",
 			activeRepoContext: null,
 			contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
-			skills: [],
+			skills: [
+				{
+					name: "fixture",
+					description: "Use <T> & {{literal}} without expansion",
+					filePath: "/nonexistent/SKILL.md",
+					baseDir: "/nonexistent",
+					source: "user",
+				},
+			],
 		});
 		const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources, tools: [tool("read")] });
 		const data = buildSessionContextView(session);
@@ -191,6 +207,19 @@ describe("context snapshot", () => {
 		expect(systemPromptText).toContain("Literal custom prompt.");
 		expect(systemPromptText).not.toContain("Unique instruction body");
 		expect(data.notices).toEqual([]);
+		const skillEntries = category(data, "skills").entries;
+		expect(skillEntries.map(entry => entry.label)).toEqual(["fixture"]);
+		const fragment = skillEntries[0]!.text;
+		expect(fragment).toContain('<skill name="fixture">');
+		expect(fragment).toContain("Use <T> & {{literal}} without expansion");
+		expect(built.systemPrompt[0]).toContain(fragment);
+		expect(systemPromptText).not.toContain("Use <T>");
+		expect(systemPromptText).toContain("<skills>\n[Shown in Skills: fixture]\n</skills>");
+		expect(built.systemPrompt[0]).not.toContain("[Shown in");
+		expect(category(data, "system-prompt").entries[0]!.tokens).toBe(
+			session.agent.tokenizer.countTokens(built.systemPrompt[0]!.replace(fragment, "")),
+		);
+		expect(category(data, "skills").tokens).toBe(session.agent.tokenizer.countTokens(fragment));
 	});
 
 	it("keeps rewritten or ambiguous prompt fragments in System Prompt, pairing repeated blocks by occurrence", () => {
@@ -201,10 +230,11 @@ describe("context snapshot", () => {
 		const session = sessionWith({ prompt: [...sources.blocks], sources });
 		let data = buildSessionContextView(session);
 		expect(category(data, "instruction-files").entries.map(entry => entry.text)).toEqual(["FILE"]);
-		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual([
-			"prefix FILE suffix",
-			"prefix  suffix",
-		]);
+		const systemEntries = category(data, "system-prompt").entries;
+		expect(systemEntries[0]?.text).toBe("prefix FILE suffix");
+		expect(systemEntries[1]?.text).toContain("Instruction Files: rules");
+		expect(systemEntries[1]?.text).not.toContain("FILE");
+		expect(systemEntries[1]?.tokens).toBe(session.agent.tokenizer.countTokens("prefix  suffix"));
 		session.agent.setSystemPrompt(["rewritten FILE"]);
 		data = buildSessionContextView(session);
 		expect(category(data, "instruction-files").entries).toEqual([]);
@@ -215,6 +245,22 @@ describe("context snapshot", () => {
 			sources: { blocks: ["FILE FILE"], sources: [{ ...sources.sources[0]!, blockIndex: 0 }] },
 		});
 		expect(category(buildSessionContextView(ambiguous), "instruction-files").entries).toEqual([]);
+	});
+
+	it("keeps a source-only block's location visible without charging tokens for the display marker", () => {
+		const sources: SystemPromptSources = {
+			blocks: ["FILE"],
+			sources: [{ id: "file", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "FILE" }],
+		};
+		const session = sessionWith({ prompt: [...sources.blocks], sources });
+		const data = buildSessionContextView(session);
+		const systemEntries = category(data, "system-prompt").entries;
+		expect(systemEntries.map(entry => entry.label)).toEqual(["System Block 1"]);
+		expect(systemEntries[0]!.text).toContain("Instruction Files: rules");
+		expect(category(data, "system-prompt").tokens).toBe(0);
+		expect(category(data, "instruction-files").entries.map(entry => entry.text)).toEqual(["FILE"]);
+		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("FILE"));
+		expect(session.systemPrompt).toEqual(["FILE"]);
 	});
 
 	it("separates assistant blocks without charging reasoning usage repeatedly and never exposes signatures", () => {
