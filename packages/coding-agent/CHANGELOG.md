@@ -5,18 +5,13 @@
 ### Added
 
 - Added a read-only interactive /context viewer for inspecting active prompts, instruction files, skills, tools, conversation messages, thinking blocks, and tool output, available even before the first message.
-- Added on-demand context snapshots using shared LLM message conversion, preserving source attribution across converted messages, distinguishing encoded and plaintext thinking, and displaying canonical tool names.
+- Added on-demand context snapshots using shared LLM message conversion, preserving source attribution across converted messages, distinguishing encoded and plaintext thinking, displaying canonical tool names, and including replayable payload-only reasoning in estimates.
+- Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID.
+- System Prompt entries in `/context` mark where instruction files and skills are displayed in their own categories without adding tokens to the estimates.
 
 ### Changed
 
-- Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID.
-- System Prompt entries in `/context` mark where instruction files and skills are displayed in their own categories without adding tokens to the estimates.
 - With a first-party Anthropic model on the official API selected, the interactive UI opens the API connection at startup, on model switch, and when you start typing, so the next turn skips connection setup; third-party gateways and custom endpoints are never probed ([#16044](https://github.com/can1357/oh-my-pi/pull/16044) by [@H4vC](https://github.com/H4vC))
-
-### Fixed
-
-- Fixed `/context` omitting payload-only replayed reasoning from Assistant Thinking, raw token estimates, and allocation shares.
-- Fixed `/context` attributing instruction files and skills loaded alongside literal custom prompts to their own categories instead of System Prompt.
 
 ## [18.11.3] - 2026-10-16
 
