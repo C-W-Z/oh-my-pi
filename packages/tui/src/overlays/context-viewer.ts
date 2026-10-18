@@ -28,6 +28,13 @@ import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
 
+/** UTF-16 offsets into entry text for a viewer-generated source marker. */
+export interface ContextViewSourceMarker {
+	readonly start: number;
+	readonly end: number;
+	readonly category: ContextCategoryId;
+}
+
 export interface ContextViewEntry {
 	readonly id: string;
 	readonly label: string;
@@ -37,6 +44,7 @@ export interface ContextViewEntry {
 	readonly info?: string;
 	readonly timestamp?: number;
 	readonly callId?: string;
+	readonly sourceMarkers?: readonly ContextViewSourceMarker[];
 }
 
 export interface ContextViewCategory {
@@ -222,10 +230,31 @@ export class ContextViewer implements Component {
 		return replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n")));
 	}
 
+	#formatEntryText(entry: ContextViewEntry, limit = entry.text.length): string {
+		if (!entry.sourceMarkers?.length) return this.#safeContent(entry.text.slice(0, limit));
+		const parts: string[] = [];
+		let cursor = 0;
+		for (const marker of entry.sourceMarkers) {
+			if (marker.start >= limit) break;
+			parts.push(this.#safeContent(entry.text.slice(cursor, marker.start)));
+			const end = Math.min(marker.end, limit);
+			const color = CONTEXT_PRESENTATION[marker.category].color;
+			parts.push(
+				this.#safeContent(entry.text.slice(marker.start, end))
+					.split("\n")
+					.map(line => theme.fg(color, line))
+					.join("\n"),
+			);
+			cursor = end;
+		}
+		parts.push(this.#safeContent(entry.text.slice(cursor, limit)));
+		return parts.join("");
+	}
+
 	#entryText(entry: ContextViewEntry): string {
 		let value = this.#safeEntries.get(entry.id);
 		if (value === undefined) {
-			value = this.#safeContent(entry.text);
+			value = this.#formatEntryText(entry);
 			this.#safeEntries.set(entry.id, value);
 		}
 		return value;
@@ -249,8 +278,8 @@ export class ContextViewer implements Component {
 	): { lines: string[]; complete: boolean; hiddenLines: number } {
 		if (this.#category?.id === "skills")
 			return { lines: this.#entryLines(entry, width), complete: true, hiddenLines: 0 };
-		const prefix = entry.text.slice(0, Math.max(1, width) * budget * 2);
-		const paragraphs = this.#safeContent(prefix).split("\n");
+		const prefixLength = Math.min(entry.text.length, Math.max(1, width) * budget * 2);
+		const paragraphs = this.#formatEntryText(entry, prefixLength).split("\n");
 		const lines: string[] = [];
 		let shownSourceLines = 0;
 		for (const [index, paragraph] of paragraphs.entries()) {
@@ -258,7 +287,7 @@ export class ContextViewer implements Component {
 			const remaining = budget - lines.length;
 			lines.push(...wrapped.slice(0, remaining));
 			if (wrapped.length > remaining) break;
-			if (index < paragraphs.length - 1 || prefix.length === entry.text.length) shownSourceLines++;
+			if (index < paragraphs.length - 1 || prefixLength === entry.text.length) shownSourceLines++;
 			if (lines.length === budget) break;
 		}
 		let total = this.#sourceLineCounts.get(entry.id);
@@ -620,7 +649,7 @@ export class ContextViewer implements Component {
 			}
 			this.#previewScroll.scroll(distance);
 		}
-		// 最后一页不足整页时只移动剩余行，避免 Native 越过仍被选中的条目。
+		// Scroll only the remaining lines on a partial page so Native does not skip the selected entry.
 		this.#nativeScroll = {
 			by: distance === delta ? by : distance > 0 ? "line-down" : "line-up",
 			n: this.#nativeScroll.n + (distance === delta ? 1 : Math.abs(distance)),
@@ -745,7 +774,7 @@ export class ContextViewer implements Component {
 					lines.push({
 						...text(styledSpans(content || " "), { wrap: "word" }),
 						key: `line-${line}`,
-						// 新建 category 时恢复返回位置；已挂载行的滚动由 scroll request 驱动。
+						// Restore the return position on mount; scroll requests move already-mounted rows.
 						...(line === offset ? { reveal: "start" as const } : {}),
 					});
 				}
@@ -785,7 +814,7 @@ export class ContextViewer implements Component {
 				{},
 				[
 					...this.#entryMetadata(this.#entry!).map(line => text([span(this.#safe(line), "dim")])),
-					text(this.#entryText(this.#entry!), { wrap: "word" }),
+					text(styledSpans(this.#entryText(this.#entry!)), { wrap: "word" }),
 				],
 				`entry-${this.#entry!.id}`,
 			);

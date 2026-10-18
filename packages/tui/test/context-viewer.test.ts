@@ -385,6 +385,69 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("colors only attributed source markers in previews and full content, including native spans and theme changes", () => {
+		const base = getBuiltinThemes().dark!;
+		setThemeInstance(
+			createTheme({
+				...base,
+				colors: { ...base.colors, success: "#12a345", customMessageLabel: "#ab34de" },
+			}),
+		);
+		const data = fixture();
+		const skillMarker = "[Shown in Skills: fixture]";
+		const fileMarker = "[Shown in Instruction Files: rules]";
+		const literalMarker = "[Shown in Skills: literal]";
+		const markers = [
+			["skills", skillMarker],
+			["instruction-files", fileMarker],
+		] as const;
+		const content = `\tplain\x1b[31m text\x1b[0m\n${literalMarker}\n${skillMarker}\n${fileMarker}\nsuffix`;
+		data.categories[0]!.entries = [
+			{
+				id: "source",
+				label: "source",
+				tokens: 1,
+				text: content,
+				sourceMarkers: markers.map(([category, marker]) => ({
+					start: content.indexOf(marker),
+					end: content.indexOf(marker) + marker.length,
+					category,
+				})),
+			},
+			{ id: "other", label: "other", tokens: 1, text: "other block" },
+		];
+		const h = harness(data);
+		h.resize(40);
+		h.render(160);
+		select(h.viewer, "system-prompt");
+		for (const page of ["preview", "full", "theme-change"]) {
+			if (page === "full") h.viewer.handleInput("\r");
+			if (page === "theme-change") {
+				setThemeInstance(
+					createTheme({
+						...base,
+						colors: { ...base.colors, success: "#3456ab", customMessageLabel: "#de7812" },
+					}),
+				);
+				h.viewer.invalidate();
+			}
+			const ansi = h.viewer.render(160).join("\n");
+			const spans = nodes(h.viewer.describe({ ...cx, cols: 160 })).flatMap(node =>
+				node.k === "text" ? (node.p?.spans ?? []) : [],
+			);
+			for (const [category, marker] of markers) {
+				const color = CONTEXT_PRESENTATION[category].color;
+				expect(ansi).toContain(theme.fg(color, marker));
+				expect(spans.find(span => span.t === marker)?.s).toBe(color);
+			}
+			expect(ansi).not.toContain(theme.fg(CONTEXT_PRESENTATION.skills.color, literalMarker));
+			expect(spans.some(span => span.t.includes(literalMarker) && span.s === undefined)).toBe(true);
+			expect(spans.some(span => span.t.includes("suffix") && span.s === undefined)).toBe(true);
+			expect(Bun.stripANSI(ansi)).toContain("plain text");
+			expect(ansi).not.toContain("\t");
+		}
+	});
+
 	it("preserves body paths while sanitizing terminal controls in ANSI and native content", () => {
 		const data = fixture();
 		const path = `${os.homedir()}/context-viewer/source.txt`;

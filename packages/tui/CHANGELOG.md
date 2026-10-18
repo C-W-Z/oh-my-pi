@@ -11,6 +11,7 @@
 ### Changed
 
 - Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata.
+- Context Viewer source markers use their destination category's theme color in ANSI and Native previews and full content.
 
 ### Fixed
 

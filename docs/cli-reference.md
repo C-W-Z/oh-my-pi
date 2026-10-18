@@ -81,7 +81,8 @@ injection are outside the base message projection. Category token counts and
 allocation shares are estimates, not exact final wire counts.
 
 System Prompt entries replace attributed instruction-file and skill fragments
-with `[Shown in <category>: <source>]` markers at their original positions.
+with `[Shown in <category>: <source>]` markers at their original positions,
+colored with the corresponding category's theme color.
 The fragments remain in the provider-facing system prompt and are displayed in
 their own categories, including when a literal custom prompt is active. Markers
 are viewer-only and do not contribute to token estimates. Unmatched or ambiguous

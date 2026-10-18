@@ -2,7 +2,12 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
-import type { ContextViewCategory, ContextViewData, ContextViewEntry } from "@oh-my-pi/pi-tui/overlays/context-viewer";
+import type {
+	ContextViewCategory,
+	ContextViewData,
+	ContextViewEntry,
+	ContextViewSourceMarker,
+} from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
@@ -69,7 +74,10 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			}
 		}
 	}
-	const claimed = new Map<number, { start: number; end: number; placeholder: string }[]>();
+	const claimed = new Map<
+		number,
+		{ start: number; end: number; placeholder: string; category: ContextCategoryId }[]
+	>();
 	const delivered = new Set<string>();
 	if (metadata) {
 		for (const kind of ["instruction-files", "skills"] as const) {
@@ -96,6 +104,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 					start,
 					end,
 					placeholder: `[Shown in ${byId.get(kind)!.label}: ${source.label}]`,
+					category: kind,
 				});
 				claimed.set(index, ranges);
 				delivered.add(source.id);
@@ -113,9 +122,15 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		let cursor = 0;
 		const fragments: string[] = [];
 		const display: string[] = [];
+		const sourceMarkers: ContextViewSourceMarker[] = [];
+		let displayOffset = 0;
 		for (const range of (claimed.get(index) ?? []).sort((a, b) => a.start - b.start)) {
 			const before = block.slice(cursor, range.start);
 			fragments.push(before);
+			const start = displayOffset + before.length;
+			const end = start + range.placeholder.length;
+			sourceMarkers.push({ start, end, category: range.category });
+			displayOffset = end;
 			display.push(before, range.placeholder);
 			cursor = range.end;
 		}
@@ -123,13 +138,14 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		fragments.push(tail);
 		display.push(tail);
 		const remaining = fragments.join("");
-		// 分类占位仅供查看，不计入实际 prompt 的 token 估算。
+		// Display-only source markers do not contribute to prompt token estimates.
 		if (display.length > 1 || remaining)
 			add("system-prompt", {
 				id: `system-prompt/${index}`,
 				label: `System Block ${index + 1}`,
 				text: display.join(""),
 				tokens: tokenizer.countTokens(remaining),
+				sourceMarkers: sourceMarkers.length ? sourceMarkers : undefined,
 			});
 	}
 	if (incomplete) notices.push("Some prompt sources could not be attributed; their content remains in System Prompt.");
