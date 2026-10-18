@@ -12,6 +12,10 @@
 
 - Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata.
 
+### Fixed
+
+- Fixed Native Context Viewer multiline previews, full-content activation, and entry scrolling while preserving selection and the return position.
+
 ## [18.11.3] - 2026-10-16
 
 ### Added

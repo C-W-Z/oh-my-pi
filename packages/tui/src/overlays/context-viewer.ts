@@ -21,6 +21,7 @@ import { matchesKey } from "../keys";
 import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
+import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
 import { type ContextBreakdown, contextSnapcompactLines } from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
@@ -484,15 +485,20 @@ export class ContextViewer implements Component {
 		this.#previewScroll.setLines(lines);
 	}
 
-	#previewLines(width: number, height: number): string[] {
-		const contentWidth = Math.max(1, width - 2);
-		this.#preparePreview(contentWidth, height);
+	#revealPreview(width: number, height: number): EntryRange | undefined {
+		this.#preparePreview(width, height);
 		const range = this.#previewCache!.ranges[this.#entries.selectedIndex];
 		if (range)
 			this.#previewScroll.revealRange(
 				{ id: this.#entries.selectedKey!, start: range.start, end: range.end, margin: 0, oversized: "start" },
-				contentWidth,
+				width,
 			);
+		return range;
+	}
+
+	#previewLines(width: number, height: number): string[] {
+		const contentWidth = Math.max(1, width - 2);
+		const range = this.#revealPreview(contentWidth, height);
 		const offset = this.#previewScroll.getScrollOffset();
 		return this.#previewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
@@ -578,9 +584,6 @@ export class ContextViewer implements Component {
 		} else if (this.#state === "category") {
 			const entry = this.#entries.selectedItem;
 			if (!entry) return;
-			const range = this.#previewCache?.ranges[this.#entries.selectedIndex];
-			const visible = this.#previewScroll.getVisibleRange();
-			if (range?.complete && visible.start <= range.start && visible.end >= range.end) return;
 			this.#openEntry(entry, "category");
 		}
 	}
@@ -600,28 +603,28 @@ export class ContextViewer implements Component {
 		else this.#close();
 	}
 
-	#navigate(delta: number): void {
-		if (this.#state === "entry") {
-			this.#fullScroll.scroll(delta);
-			return;
-		}
-		if (this.#state === "overview") {
+	#navigate(delta: number, by: TspScrollBy): void {
+		let distance = delta;
+		if (this.#state === "entry") this.#fullScroll.scroll(delta);
+		else if (this.#state === "overview") {
 			if (!this.#overview.move(delta)) this.#overviewScroll.scroll(delta);
-			return;
-		}
-		const range = this.#previewCache?.ranges[this.#entries.selectedIndex];
-		if (range) {
+		} else {
+			const range = this.#previewCache?.ranges[this.#entries.selectedIndex];
 			const visible = this.#previewScroll.getVisibleRange();
-			if (delta > 0 && range.end > visible.end) {
-				this.#previewScroll.scroll(Math.min(delta, range.end - visible.end));
+			if (range && delta > 0 && range.end > visible.end) distance = Math.min(delta, range.end - visible.end);
+			else if (range && delta < 0 && range.start < visible.start)
+				distance = Math.max(delta, range.start - visible.start);
+			else {
+				this.#entries.move(delta > 0 ? 1 : -1);
 				return;
 			}
-			if (delta < 0 && range.start < visible.start) {
-				this.#previewScroll.scroll(Math.max(delta, range.start - visible.start));
-				return;
-			}
+			this.#previewScroll.scroll(distance);
 		}
-		this.#entries.move(delta > 0 ? 1 : -1);
+		// 最后一页不足整页时只移动剩余行，避免 Native 越过仍被选中的条目。
+		this.#nativeScroll = {
+			by: distance === delta ? by : distance > 0 ? "line-down" : "line-up",
+			n: this.#nativeScroll.n + (distance === delta ? 1 : Math.abs(distance)),
+		};
 	}
 
 	/** Capture only handled navigation keys; the focus path consumes other modal input. */
@@ -645,17 +648,13 @@ export class ContextViewer implements Component {
 		if (matchesSelectCancel(data) || matchesKey(data, "escape")) this.#back();
 		else if (getKeybindings().matches(data, "tui.select.confirm") || matchesKey(data, "enter")) this.#activate();
 		else if (matchesSelectUp(data) || data === "k") {
-			this.#navigate(-1);
-			by = "line-up";
+			this.#navigate(-1, "line-up");
 		} else if (matchesSelectDown(data) || data === "j") {
-			this.#navigate(1);
-			by = "line-down";
+			this.#navigate(1, "line-down");
 		} else if (matchesSelectPageUp(data)) {
-			this.#navigate(-Math.max(1, this.#height - 1));
-			by = "page-up";
+			this.#navigate(-Math.max(1, this.#height - 1), "page-up");
 		} else if (matchesSelectPageDown(data)) {
-			this.#navigate(Math.max(1, this.#height - 1));
-			by = "page-down";
+			this.#navigate(Math.max(1, this.#height - 1), "page-down");
 		} else if (matchesKey(data, "home") || matchesKey(data, "end")) {
 			const last = matchesKey(data, "end");
 			if (this.#state === "entry") {
@@ -665,7 +664,11 @@ export class ContextViewer implements Component {
 			} else if (this.#state === "overview") {
 				this.#overviewBoundary = last ? "last" : "first";
 				this.#overview.moveToBoundary(this.#overviewBoundary);
-			} else this.#entries.moveToBoundary(last ? "last" : "first");
+			} else {
+				this.#entries.moveToBoundary(last ? "last" : "first");
+				this.#requestRender();
+				return;
+			}
 			by = last ? "end" : "start";
 		} else if (data === "z" && this.#canZoom) this.#fit = !this.#fit;
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
@@ -727,33 +730,54 @@ export class ContextViewer implements Component {
 			const body = children.splice(summary.length);
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
-			this.#previewLines(this.#width, this.#height);
-			const items = this.#entries.items.map(entry => {
-				const content = this.#entryPreview(
-					entry,
-					Math.max(1, this.#width - 5),
-					Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - 2)),
-				);
-				const detail = [
-					...this.#entryMetadata(entry).map(line => span(`${line}\n`, "dim")),
-					span(content.lines.join("\n")),
-					...(!content.complete
-						? [
-								span(`\n… +${content.hiddenLines} lines`, "dim"),
-								...(entry.id === this.#entries.selectedKey
-									? [span(" · ", "dim"), span("Enter - View Content", "accent")]
-									: []),
-							]
-						: []),
+			this.#revealPreview(Math.max(1, this.#width - 2), this.#height);
+			const cache = this.#previewCache!;
+			const offset = this.#previewScroll.getScrollOffset();
+			const items = this.#entries.items.flatMap((entry, index) => {
+				const range = cache.ranges[index]!;
+				const selected = entry.id === this.#entries.selectedKey;
+				const lines: NativeNode[] = [];
+				for (let line = range.start; line < range.end; line++) {
+					const content =
+						selected && !range.complete && line === range.end - 1
+							? this.#truncationMarker(range.hiddenLines, true)
+							: cache.lines[line]!;
+					lines.push({
+						...text(styledSpans(content || " "), { wrap: "word" }),
+						key: `line-${line}`,
+						// 新建 category 时恢复返回位置；已挂载行的滚动由 scroll request 驱动。
+						...(line === offset ? { reveal: "start" as const } : {}),
+					});
+				}
+				return [
+					{
+						...node(
+							"col",
+							{
+								mark: selected ? "pick" : undefined,
+								actions: { click: "select-entry", dblclick: "open-entry" },
+							},
+							lines,
+							entry.id,
+						),
+						...(selected ? { reveal: { at: "start" as const, n: 0 } } : {}),
+					},
+					{
+						...text(" ", { wrap: "word" }),
+						key: `separator-${index}`,
+						...(range.end === offset ? { reveal: "start" as const } : {}),
+					},
 				];
-				return node("item", { label: this.#entryHeader(entry), detail }, undefined, entry.id);
 			});
-			children.push(
-				selectList("entries", items, {
-					selected: this.#entries.selectedKey,
-					empty: "No content in this category.",
-				}),
-			);
+			children.push({
+				...node(
+					"col",
+					{ grow: 1, gap: "none" },
+					items.length ? items : [text("No content in this category.", { wrap: "word" })],
+					"entries",
+				),
+				scroll: this.#nativeScroll,
+			});
 		} else {
 			this.#prepareFull(this.#width, this.#height);
 			const body = node(
@@ -784,15 +808,16 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (event.act === "zoom") this.handleInput("z");
-		} else if (event.type === "select" || event.type === "activate") {
-			if (this.#state === "overview") {
-				const item = this.#overview.items.find(item => item.key === event.item);
-				if (!item?.category) return;
-				this.#overview.setSelectedKey(event.item);
-			} else if (this.#state === "category") {
-				if (!this.#entries.items.some(entry => entry.id === event.item)) return;
-				this.#entries.setSelectedKey(event.item);
-			} else return;
+			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
+				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
+				if (!entry) return;
+				this.#entries.setSelectedKey(entry.id);
+				if (event.act === "open-entry") this.#activate();
+			}
+		} else if (this.#state === "overview" && (event.type === "select" || event.type === "activate")) {
+			const item = this.#overview.items.find(item => item.key === event.item);
+			if (!item?.category) return;
+			this.#overview.setSelectedKey(event.item);
 			if (event.type === "activate") this.#activate();
 		}
 		this.#requestRender();

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as os from "node:os";
 import type { TspText } from "@oh-my-pi/pi-wire";
 import type { NativeNode } from "../src/native/node";
+import { TspDocument } from "../src/native/apply";
+import { Reconciler } from "../src/native/reconcile";
 import { ContextViewer, type ContextViewData, type ContextViewCategory } from "../src/overlays/context-viewer";
 import { createTheme, getBuiltinThemes } from "../src/theme/loader";
 import { ensureThemeSync, setThemeInstance, theme, type Theme } from "../src/theme/theme";
@@ -132,7 +134,7 @@ function select(viewer: ContextViewer, key: string, activate = true): void {
 
 function selected(root: NativeNode): string | null | undefined {
 	const list = nodes(root).find(node => node.k === "list");
-	return list?.k === "list" ? list.p?.selected : undefined;
+	return list?.k === "list" ? list.p?.selected : nodes(root).find(node => node.p?.mark === "pick")?.key;
 }
 
 describe("ContextViewer navigation", () => {
@@ -183,19 +185,129 @@ describe("ContextViewer navigation", () => {
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("tool-output/bash");
 	});
 
-	it("does not add a redundant full-content level for a preview already showing the complete entry", () => {
-		const h = harness();
-		h.render();
+	it("opens a short multiline entry through Native activation and Enter, then returns to the same selection", () => {
+		const data = fixture();
+		data.categories.find(category => category.id === "tool-output")!.entries[0] = {
+			id: "result/0",
+			label: "short multiline",
+			tokens: 1,
+			text: "first line\nmiddle line\nshort-multiline-tail",
+		};
+		const h = harness(data);
+		h.viewer.describe(cx);
 		select(h.viewer, "tool-output");
-		h.render();
-		h.viewer.handleNativeEvent({ type: "select", key: "entries", item: "result/1" });
-		h.render();
+		const preview = h.render();
+		const category = h.viewer.describe(cx);
+		const entry = nodes(category).find(node => node.key === "result/0")!;
+		expect(entry.k).toBe("col");
+		expect(
+			nodes(entry)
+				.filter(node => node.k === "text")
+				.every(node => node.p?.wrap === "word"),
+		).toBe(true);
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+		expect(h.render().join("\n")).toContain("short-multiline-tail");
+		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+		expect(h.render()).toEqual(preview);
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
 		h.viewer.handleInput("\r");
-		h.render();
-		expect(selected(h.viewer.describe(cx))).toBe("result/1");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
 		h.viewer.handleInput("\x1b");
-		h.render();
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
+		h.viewer.handleInput("\x1b");
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output");
+	});
+
+	it("scrolls Native multiline previews before changing selection and restores the category viewport after Back", () => {
+		const data = fixture();
+		data.categories.find(category => category.id === "skills")!.entries = [
+			{ id: "skill/0", label: "long skill", tokens: 1, text: `${"routing hint\n".repeat(60)}native-skill-tail` },
+			{ id: "skill/1", label: "next skill", tokens: 1, text: "next routing hint" },
+		];
+		const h = harness(data);
+		h.resize(12);
+		const nativeCx = { ...cx, cols: 48 };
+		const reconciler = new Reconciler("context-test");
+		const document = new TspDocument("context-test");
+		let frame = 0;
+		const reconcile = () => {
+			const ops = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, nativeCx);
+			expect(document.applyFrame({ sf: document.surface, s: ++frame, ops })).toEqual([]);
+			return ops;
+		};
+		reconcile();
+		select(h.viewer, "skills");
+		reconcile();
+		const preview = nodes(h.viewer.describe(nativeCx));
+		const body = preview.find(node => node.key === "entries")!;
+		expect(body.k).toBe("col");
+		expect(body.scroll).toBeDefined();
+		for (const [key, by] of [
+			["j", "line-down"],
+			["\x1b[6~", "page-down"],
+			["k", "line-up"],
+			["\x1b[5~", "page-up"],
+		] as const) {
+			h.viewer.handleInput(key);
+			const ops = reconcile();
+			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual([by]);
+			expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
+		}
+		h.viewer.handleInput("j");
+		reconcile();
+		const before = h.render(48);
+		h.viewer.handleInput("\r");
+		reconcile();
+		h.viewer.handleInput("\x1b[F");
+		reconcile();
+		expect(h.render(48).join("\n")).toContain("native-skill-tail");
+		h.viewer.handleInput("\x1b");
+		const restored = reconcile();
+		expect(restored.some(op => op[0] === "reveal" && op[2] === "start")).toBe(true);
+		expect(h.render(48)).toEqual(before);
+		h.resize(18);
+		reconcile();
+		let changed = false;
+		for (let step = 0; step < 80; step++) {
+			h.viewer.handleInput("j");
+			const ops = reconcile();
+			if (selected(h.viewer.describe(nativeCx)) === "skill/1") {
+				expect(ops.some(op => op[0] === "scroll")).toBe(false);
+				expect(ops.some(op => op[0] === "reveal")).toBe(true);
+				changed = true;
+				break;
+			}
+			expect(ops.some(op => op[0] === "scroll" && op[2] === "line-down")).toBe(true);
+		}
+		expect(changed).toBe(true);
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/skill/0", act: "select-entry", mods: [] });
+		reconcile();
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
+	});
+
+	it("clamps a Native page step to the selected entry tail before advancing selection", () => {
+		const data = fixture();
+		data.categories.find(category => category.id === "skills")!.entries = [
+			{ id: "skill/0", label: "first", tokens: 1, text: `${"body\n".repeat(6)}partial-page-tail` },
+			{ id: "skill/1", label: "next", tokens: 1, text: "next body" },
+		];
+		const h = harness(data);
+		h.resize(12);
+		const nativeCx = { ...cx, cols: 48 };
+		const reconciler = new Reconciler("context-boundary");
+		const regions = { main: [h.viewer], dock: [], layer: [] };
+		reconciler.reconcile(regions, nativeCx);
+		select(h.viewer, "skills");
+		reconciler.reconcile(regions, nativeCx);
+		h.viewer.handleInput("\x1b[6~");
+		const scrolls = reconciler.reconcile(regions, nativeCx).filter(op => op[0] === "scroll");
+		expect(scrolls.map(op => op[2])).toEqual(["line-down", "line-down", "line-down"]);
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
+		expect(h.render(48).join("\n")).toContain("partial-page-tail");
+		h.viewer.handleInput("\x1b[6~");
+		expect(reconciler.reconcile(regions, nativeCx).some(op => op[0] === "scroll")).toBe(false);
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/1");
 	});
 
 	it("handles native select/activate/Back/Close and emits repeated terminal scroll requests", () => {
@@ -322,7 +434,7 @@ describe("ContextViewer presentation", () => {
 			new Date(0).toLocaleDateString([], { year: "numeric", month: "2-digit", day: "2-digit" }),
 		);
 		const nativePreview = nodes(h.viewer.describe({ ...cx, hour12: false })).find(
-			node => node.k === "item" && node.key === "result/0",
+			node => node.k === "col" && node.key === "result/0",
 		);
 		expect(JSON.stringify(nativePreview)).toContain(expectedTime(false));
 		h.viewer.handleInput("\r");
@@ -622,7 +734,7 @@ describe("ContextViewer presentation", () => {
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
 		expect(scrolled.some(line => line.includes("first title"))).toBe(false);
 		expect(scrolled.filter(line => line.includes("body")).every(line => line.includes("┃ "))).toBe(true);
-		h.viewer.handleNativeEvent({ type: "select", key: "entries", item: "result/1" });
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/1", act: "select-entry", mods: [] });
 		const next = h.render(48);
 		expect(next.find(line => line.includes("bash result"))).toContain("┃ ");
 		expect(next.find(line => line.includes("short result"))).toContain("┃ ");

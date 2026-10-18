@@ -87,6 +87,12 @@ without changing the denominator used by percentages. Browsing does not submit
 the composer draft or interrupt a background turn. The snapshot stays unchanged
 while open; close and reopen it to refresh.
 
+Enter opens the selected entry's full content even when its preview fits. Native
+category previews use wrapping text blocks: click a block to select it and
+double-click to open it. Back or Esc from full content restores the category's
+selection and preview position. Empty categories remain accessible; categories
+with one entry open full content directly.
+
 ### Launch flags
 
 #### Session and workspace
