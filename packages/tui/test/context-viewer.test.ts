@@ -21,7 +21,8 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@oh-my-pi/pi-agent-core/compaction"
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { computeContextBreakdown, ContextUsageView } from "../src/status-line/context-usage";
 
-const cx = { cols: 100, reduceMotion: false, dark: true, supports: () => true, feature: () => true };
+const cx = { cols: 100, reduceMotion: false, dark: true, supports: () => false, feature: () => true };
+const meterCx = { ...cx, supports: () => true };
 let previous: Theme;
 beforeEach(() => {
 	ensureThemeSync();
@@ -535,6 +536,47 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("places a stacked meter above selectable categories on meter-capable terminals, without map zoom", () => {
+		const data = fixture();
+		const h = harness(data);
+		try {
+			for (const cols of [48, 100]) {
+				const root = h.viewer.describe({ ...meterCx, cols });
+				const all = nodes(root);
+				const meter = all.find(node => node.k === "meter");
+				if (meter?.k !== "meter") throw new Error("Missing context meter");
+				expect(meter.p?.value).toBe(data.usage / data.window);
+				expect(meter.p?.parts?.map(part => part.value)).toEqual([
+					21250 / 200000,
+					10625 / 200000,
+					10625 / 200000,
+					10625 / 200000,
+					31875 / 200000,
+					95000 / 200000,
+					20000 / 200000,
+				]);
+				expect(meter.p?.parts?.at(-1)).toMatchObject({ token: "warning", hatch: true });
+				expect(meter.p?.marks?.[0]?.at).toBe(data.breakdown.thresholdTokens! / data.window);
+				const body = root.c?.findIndex(child => "k" in child && child.key === "overview");
+				const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
+				expect(bar).toBeLessThan(body!);
+				const overview = all.find(node => node.key === "overview");
+				expect(overview?.c?.[0]).toMatchObject({ k: "list", key: "categories" });
+				expect(all.some(node => node.p?.actions?.click === "zoom")).toBe(false);
+				expect(h.viewer.capturesInput("z")).toBe(false);
+			}
+			select(h.viewer, "tool-output/read");
+			const entry = nodes(h.viewer.describe(meterCx)).find(node => node.key === "entry-result/0");
+			expect(JSON.stringify(entry)).toContain("context-output-tail");
+			h.viewer.handleInput("\x1b");
+			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+			expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
+			expect(h.viewer.capturesInput("z")).toBe(true);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("colors only attributed source markers in previews and full content, including native spans and theme changes", () => {
 		const base = getBuiltinThemes().dark!;
 		setThemeInstance(
@@ -802,7 +844,7 @@ describe("ContextViewer presentation", () => {
 			const swatch = theme.fg("accent", glyph);
 			expect(ansi.slice(0, 10).some(line => line.includes(swatch))).toBe(true);
 			expect(ansi.some(line => Bun.stripANSI(line).includes("System prompt:") && line.includes(swatch))).toBe(true);
-			const native = nodes(view.describe(cx));
+			const native = nodes(view.describe(meterCx));
 			expect(
 				native.some(
 					node => node.k === "text" && node.p?.spans?.some(span => span.t === glyph && span.s === "accent"),

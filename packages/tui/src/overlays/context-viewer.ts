@@ -24,7 +24,7 @@ import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from ".
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
-import { type ContextBreakdown, contextSnapcompactLines } from "../status-line/context-usage";
+import { type ContextBreakdown, contextSnapcompactLines, describeContextMeter } from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
@@ -112,6 +112,7 @@ export class ContextViewer implements Component {
 	readonly #panel = new OverlayPanel("Context");
 	readonly #allocated = new Map<ContextViewCategory, number>();
 	readonly #allocationAvailable: boolean;
+	readonly #meter: readonly NativeNode[] | undefined;
 	readonly #header = new PanelRows();
 	readonly #body = new PanelRows();
 	readonly #footer = new PanelRows();
@@ -167,6 +168,20 @@ export class ContextViewer implements Component {
 			}
 		};
 		if (allocated) allocate(data.categories, allocated);
+		if (this.#allocationAvailable && data.window > 0 && Number.isFinite(data.window)) {
+			this.#meter = describeContextMeter({
+				contextWindow: data.window,
+				usedTokens: data.usage,
+				freeTokens: data.free,
+				autoCompactBufferTokens: data.buffer,
+				thresholdTokens: data.breakdown.thresholdTokens,
+				categories: data.categories.map(category => ({
+					label: this.#safe(category.label),
+					tokens: this.#allocated.get(category)!,
+					color: CONTEXT_PRESENTATION[category.id].color,
+				})),
+			});
+		}
 		const rows: OverviewRow[] = [];
 		for (const category of data.categories) {
 			rows.push({
@@ -711,6 +726,8 @@ export class ContextViewer implements Component {
 		this.#width = Math.max(1, cx.cols - 4);
 		this.#hour12 = cx.hour12;
 		const summary = this.#layout();
+		const meter = this.#state === "overview" && cx.supports("meter") ? this.#meter : undefined;
+		if (meter) summary.splice(1, 1);
 		const children: NativeNode[] = summary.map(line => text([span(line, "dim")], { wrap: "none" }));
 		if (this.#state === "category") children.push(text([span(this.#safe(this.#category!.label), "strong")]));
 		else if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
@@ -736,7 +753,7 @@ export class ContextViewer implements Component {
 				);
 			});
 			const list = selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
-			const geometry = this.#mapGeometry(this.#width, this.#height);
+			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
 			this.#mapVisible = !!geometry;
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
@@ -761,6 +778,7 @@ export class ContextViewer implements Component {
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
 			const body = children.splice(summary.length);
+			if (meter) children.push(...meter);
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
 			this.#revealPreview(Math.max(1, this.#width - 2), this.#height);
