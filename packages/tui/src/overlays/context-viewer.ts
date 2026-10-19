@@ -24,7 +24,12 @@ import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from ".
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
-import { type ContextBreakdown, contextSnapcompactLines, describeContextMeter } from "../status-line/context-usage";
+import {
+	type ContextBreakdown,
+	contextSnapcompactLines,
+	contextUsageHead,
+	describeContextMeter,
+} from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
@@ -100,7 +105,7 @@ function allocateTokens(weights: readonly number[], total: number): number[] | u
 
 /** Read-only snapshot navigation with shared state for keyboard and native interactions. */
 export class ContextViewer implements Component {
-	readonly nativeOverlay = { role: "omp.overlay.context", size: "lg", anchor: "center", head: "Context" } as const;
+	readonly nativeOverlay: NonNullable<Component["nativeOverlay"]>;
 	readonly #data: ContextViewData;
 	readonly #close: () => void;
 	readonly #requestRender: () => void;
@@ -145,6 +150,12 @@ export class ContextViewer implements Component {
 		options: { onClose: () => void; requestRender: () => void; getRows: () => number },
 	) {
 		ensureThemeSync();
+		this.nativeOverlay = {
+			role: "omp.overlay.report",
+			size: "lg",
+			anchor: "center",
+			head: contextUsageHead(data.breakdown),
+		};
 		this.#data = data;
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
@@ -725,10 +736,9 @@ export class ContextViewer implements Component {
 	describe(cx: DescribeContext): NativeNode {
 		this.#width = Math.max(1, cx.cols - 4);
 		this.#hour12 = cx.hour12;
-		const summary = this.#layout();
+		this.#layout();
 		const meter = this.#state === "overview" && cx.supports("meter") ? this.#meter : undefined;
-		if (meter) summary.splice(1, 1);
-		const children: NativeNode[] = summary.map(line => text([span(line, "dim")], { wrap: "none" }));
+		const children: NativeNode[] = [];
 		if (this.#state === "category") children.push(text([span(this.#safe(this.#category!.label), "strong")]));
 		else if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
 		if (this.#state === "overview") {
@@ -777,7 +787,7 @@ export class ContextViewer implements Component {
 			for (const line of this.#diagnostics()) children.push(text([span(line, "dim")], { wrap: "word" }));
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
-			const body = children.splice(summary.length);
+			const body = children.splice(0);
 			if (meter) children.push(...meter);
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
@@ -850,7 +860,7 @@ export class ContextViewer implements Component {
 				actionButton("Close", "close"),
 			]),
 		);
-		return col(children, { role: "omp.context.viewer" });
+		return col(children, { role: "omp.context" });
 	}
 
 	handleNativeEvent(event: NativeUiEvent): void {

@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- `/context` shows a stacked usage bar above the category list in Tern; terminals without native meters retain the context map.
+- `/context` in Tern shows the model in its title and a prominent used-token total above the stacked usage bar, without snapshot boilerplate; terminals without native meters retain the context map.
 - Fixed the composer caret drifting one cell left per pasted image or video chip in terminals that draw the chip icon as a wide emoji (JetBrains terminal); the `unicode` preset now uses `📷`/`🎬` chip icons ([#16270](https://github.com/can1357/oh-my-pi/issues/16270))
 - Fixed Tern hiding user text sent with `/skill:<name>` inside a collapsed skill card; only the loaded skill prompt is hidden ([#16311](https://github.com/can1357/oh-my-pi/issues/16311))
 
