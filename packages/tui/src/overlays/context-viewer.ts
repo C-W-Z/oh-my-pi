@@ -793,7 +793,8 @@ export class ContextViewer implements Component {
 					);
 				children.push(row([col(grid), list], { gap: "lg" }));
 			} else children.push(list);
-			for (const line of this.#diagnostics()) children.push(text([span(line, "dim")], { wrap: "word" }));
+			const diagnostics = meter ? contextSnapcompactLines(this.#data.breakdown) : this.#diagnostics();
+			for (const line of diagnostics) children.push(text([span(line, "dim")], { wrap: "word" }));
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
 			const body = children.splice(0);
