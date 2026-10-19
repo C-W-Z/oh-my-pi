@@ -745,10 +745,17 @@ export class ContextViewer implements Component {
 			const items = this.#overview.items.map(item => {
 				const presentation = CONTEXT_PRESENTATION[item.id];
 				const selected = this.#overview.selectedKey === item.key;
+				const glyph = meter
+					? item.id === "buffer"
+						? "▨"
+						: item.id === "free"
+							? "□"
+							: "■"
+					: theme.symbol(presentation.symbol);
 				const value =
 					item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`;
 				const label: TspSpan[] = [
-					span(`${item.child ? "  " : ""}${theme.symbol(presentation.symbol)} `, presentation.color),
+					span(`${item.child ? "  " : ""}${glyph} `, presentation.color),
 					span(this.#safe(item.label), selected ? `${presentation.color} strong` : undefined),
 				];
 				return node(
@@ -762,7 +769,9 @@ export class ContextViewer implements Component {
 					item.key,
 				);
 			});
-			const list = selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
+			const list = meter
+				? node("list", { selected: this.#overview.selectedKey, grow: 1 }, items, "categories")
+				: selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
 			this.#mapVisible = !!geometry;
 			if (geometry) {

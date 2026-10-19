@@ -536,6 +536,86 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("keeps the meter legend as a selectable list with bar-colored swatches", () => {
+		const h = harness();
+		try {
+			const root = h.viewer.describe(meterCx);
+			const all = nodes(root);
+			const meter = all.find(node => node.k === "meter");
+			if (meter?.k !== "meter") throw new Error("Missing context meter");
+			const list = all.find(node => node.key === "categories");
+			if (list?.k !== "list") throw new Error("Missing selectable category list");
+			const item = (key: string): Extract<NativeNode, { k: "item" }> | undefined => {
+				const child = nodes(list).find(node => node.key === key);
+				return child?.k === "item" ? child : undefined;
+			};
+			const expected = [
+				{
+					row: item("system-prompt"),
+					glyph: "■",
+					color: CONTEXT_PRESENTATION["system-prompt"].color,
+					bar: "System Prompt ·",
+				},
+				{ row: item("instruction-files"), glyph: "■", color: CONTEXT_PRESENTATION["instruction-files"].color },
+				{ row: item("skills"), glyph: "■", color: CONTEXT_PRESENTATION.skills.color },
+				{
+					row: item("tool-output/read"),
+					glyph: "■",
+					color: CONTEXT_PRESENTATION["tool-output"].color,
+					bar: "Tool Output ·",
+				},
+				{ row: item("buffer"), glyph: "▨", color: "warning", bar: "Autocompact buffer ·" },
+				{ row: item("free"), glyph: "□", color: "dim" },
+			];
+			for (const item of expected) {
+				if (!item.row || !Array.isArray(item.row.p?.label)) throw new Error("Missing category list item");
+				expect(item.row.p.label[0]?.t.trim()).toBe(item.glyph);
+				expect(item.row.p.label[0]?.s).toBe(item.color);
+				if (item.bar)
+					expect(meter.p?.parts?.find(part => part.label?.startsWith(item.bar))?.token).toBe(item.color);
+			}
+			expect(item("skills")?.p?.disabled).toBe(false);
+			expect(item("buffer")?.p?.disabled).toBe(true);
+			expect(item("free")?.p?.disabled).toBe(true);
+			expect(list.p?.selected).toBe("system-prompt");
+			const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
+			if (fallback?.k !== "item") throw new Error("Missing fallback category");
+			expect(textValue(fallback.p?.label)).toStartWith(`${theme.symbol("context.content")} `);
+			expect(h.render().join("\n")).toContain(`${theme.symbol("context.content")} System Prompt`);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
+	it("selects and opens category list rows without activating the buffer", () => {
+		const h = harness();
+		try {
+			const reconciler = new Reconciler("context-swatches");
+			const pending = reconciler
+				.reconcile({ main: [h.viewer], dock: [], layer: [] }, meterCx)
+				.flatMap(op => (op[0] === "add" ? [op[4]] : []));
+			let listPath: string | undefined;
+			for (let index = 0; index < pending.length; index++) {
+				const wire = pending[index]!;
+				if (wire.k === "list") listPath = reconciler.target(wire.id)?.keypath;
+				pending.push(...(wire.c ?? []));
+			}
+			if (!listPath) throw new Error("Missing category list path");
+			h.viewer.handleNativeEvent({ type: "select", key: listPath, item: "tool-output/read" });
+			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "buffer" });
+			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "tool-output/read" });
+			expect(JSON.stringify(h.viewer.describe(meterCx))).toContain("context-output-tail");
+			h.viewer.handleInput("\x1b");
+			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+			h.viewer.handleInput("\x1b[A");
+			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output");
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("places a stacked meter above selectable categories on meter-capable terminals, without map zoom", () => {
 		const data = fixture();
 		const h = harness(data);
@@ -560,8 +640,6 @@ describe("ContextViewer presentation", () => {
 				const body = root.c?.findIndex(child => "k" in child && child.key === "overview");
 				const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
 				expect(bar).toBeLessThan(body!);
-				const overview = all.find(node => node.key === "overview");
-				expect(overview?.c?.[0]).toMatchObject({ k: "list", key: "categories" });
 				expect(all.some(node => node.p?.actions?.click === "zoom")).toBe(false);
 				expect(h.viewer.capturesInput("z")).toBe(false);
 			}
