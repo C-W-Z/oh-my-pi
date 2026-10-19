@@ -536,6 +536,30 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("keeps buffer and free totals in the category list without disabled dimming or an extra footer rule", () => {
+		const h = harness();
+		try {
+			const root = h.viewer.describe(meterCx);
+			const list = nodes(root).find(node => node.key === "categories");
+			if (list?.k !== "list") throw new Error("Missing category list");
+			for (const key of ["buffer", "free"]) {
+				const summary = list.c?.find(node => "k" in node && node.key === key);
+				expect(summary && "k" in summary ? summary.k : undefined).toBe("item");
+				if (!summary || !("k" in summary) || summary.k !== "item") throw new Error("Missing summary item");
+				expect(summary.p?.disabled).not.toBe(true);
+				expect(Array.isArray(summary.p?.label) ? summary.p.label[1] : undefined).toEqual({
+					t: key === "buffer" ? "Auto-Compact Buffer" : "Free Space",
+				});
+				expect(summary.p?.value).toBe(key === "buffer" ? "20K · 10.0%" : "95K · 47.5%");
+				h.viewer.handleNativeEvent({ type: "activate", key: "categories", item: key });
+				expect(selected(h.viewer.describe(meterCx))).toBe("system-prompt");
+			}
+			expect(nodes(root).filter(node => node.k === "rule")).toHaveLength(0);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("keeps the meter legend as a selectable list with bar-colored swatches", () => {
 		const h = harness();
 		try {
@@ -564,8 +588,6 @@ describe("ContextViewer presentation", () => {
 					color: CONTEXT_PRESENTATION["tool-output"].color,
 					bar: "Tool Output ·",
 				},
-				{ row: item("buffer"), glyph: "▨", color: "warning", bar: "Autocompact buffer ·" },
-				{ row: item("free"), glyph: "□", color: "dim" },
 			];
 			for (const item of expected) {
 				if (!item.row || !Array.isArray(item.row.p?.label)) throw new Error("Missing category list item");
@@ -574,9 +596,6 @@ describe("ContextViewer presentation", () => {
 				if (item.bar)
 					expect(meter.p?.parts?.find(part => part.label?.startsWith(item.bar))?.token).toBe(item.color);
 			}
-			expect(item("skills")?.p?.disabled).toBe(false);
-			expect(item("buffer")?.p?.disabled).toBe(true);
-			expect(item("free")?.p?.disabled).toBe(true);
 			expect(list.p?.selected).toBe("system-prompt");
 			const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
 			if (fallback?.k !== "item") throw new Error("Missing fallback category");
@@ -970,7 +989,9 @@ describe("ContextViewer presentation", () => {
 		const categories = data.categories.slice(0, 3);
 		for (const [index, category] of categories.entries()) category.tokens = [1, 2, 4][index]!;
 		const h = harness({ ...data, categories, estimatedTokens: 7, usage: 5, window: 100 });
-		const values = nodes(h.viewer.describe(cx)).filter(node => node.k === "item" && !node.p?.disabled);
+		const values = nodes(h.viewer.describe(cx)).filter(
+			node => node.k === "item" && categories.some(category => category.id === node.key),
+		);
 		expect(values.map(node => (node.k === "item" ? textValue(node.p?.value) : undefined))).toEqual([
 			"1 · 1.0%",
 			"1 · 1.0%",

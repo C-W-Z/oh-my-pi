@@ -763,7 +763,6 @@ export class ContextViewer implements Component {
 					{
 						label,
 						value: selected ? [span(value, presentation.color)] : value,
-						disabled: !item.category,
 					},
 					undefined,
 					item.key,
@@ -863,7 +862,6 @@ export class ContextViewer implements Component {
 			children.push({ ...body, scroll: this.#nativeScroll });
 		}
 		children.push(
-			node("rule"),
 			actionBar([
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
 				...(this.#canZoom ? [actionButton(this.#fit ? "Window" : "Fit", "zoom")] : []),
