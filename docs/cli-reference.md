@@ -99,6 +99,8 @@ payloads, displayed as an encoded-thinking placeholder without exposing payloads
 or signatures. Counts follow the active reader's replay-aware tokenizer, exclude
 reasoning it filters or cannot replay, and do not double-count payload reasoning
 already attributed to explicit thinking blocks.
+The latest surviving assistant turn uses the reader's latest-turn replay pricing,
+including signed thinking retained by Anthropic after abandoned tool calls.
 
 Retained Anthropic web-search and tool-search calls appear in Tool Calls, with
 their results grouped in Tool Output by tool name and linked by call ID. Readable

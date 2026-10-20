@@ -429,6 +429,36 @@ describe("context snapshot", () => {
 		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-encoded-thinking|private-ciphertext/);
 	});
 
+	it("prices the latest surviving signed turn until a newer assistant response survives replay", () => {
+		const message: AssistantMessage = {
+			...reply([
+				{ type: "thinking", thinking: "retained excerpt", thinkingSignature: "private-signature" },
+				{ type: "toolCall", id: "call", name: "read", arguments: { path: "notes.md" } },
+			]),
+			stopReason: "length",
+			usage: { ...reply([]).usage, output: 1000 },
+		};
+		const session = sessionWith({ prompt: [], messages: [message] });
+		const initial = buildSessionContextView(session);
+		expect(initial.estimatedTokens).toBe(1000);
+		expect(category(initial, "assistant-thinking").tokens).toBe(1000 - category(initial, "tool-calls").tokens);
+
+		session.agent.appendMessage({ ...reply([]), stopReason: "length" });
+		expect(buildSessionContextView(session).estimatedTokens).toBe(1000);
+
+		const next = reply([{ type: "text", text: "new response" }]);
+		session.agent.appendMessage(next);
+		const updated = buildSessionContextView(session);
+		expect(updated.estimatedTokens).toBe(
+			session.agent.tokenizer.countMessage(message) + session.agent.tokenizer.countMessage(next),
+		);
+		expect(category(updated, "assistant-thinking").tokens).toBe(
+			session.agent.tokenizer.countTokens("retained excerpt"),
+		);
+		expect(initial.estimatedTokens).toBe(1000);
+		expect(JSON.stringify(updated)).not.toContain("private-signature");
+	});
+
 	it("groups retained server-tool calls and results without exposing encrypted replay fields", () => {
 		const message = reply([
 			{

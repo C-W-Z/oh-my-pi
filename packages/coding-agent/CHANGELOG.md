@@ -10,6 +10,7 @@
 - System Prompt entries in `/context` mark attributed instruction files and skills without charging display-marker tokens; ambiguous, overlapping, moved, or changed sources remain in System Prompt with an incomplete-attribution notice ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 ### Fixed
 
+- `/context` includes retained reasoning in the latest Anthropic assistant turn's thinking estimate, including turns with abandoned tool calls.
 - `/context` shows retained Anthropic web-search and tool-search calls and results with call IDs, without exposing encrypted replay content.
 - `/context` retains instruction-file and skill attribution when SDK prompt callbacks preserve the default prompt blocks.
 - Fixed `read` middle-eliding large file pages into an artifact; a page past the output spill threshold now stops at a line boundary with an exact `:N` continuation ([#16277](https://github.com/can1357/oh-my-pi/issues/16277))

@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
+import { isSurvivingAssistant } from "@oh-my-pi/pi-ai/providers/transform-messages";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
 import type {
@@ -235,7 +236,11 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	};
 	const serverToolNames = new Map<string, string>();
 	const sourceMessages = session.agent.state.messages;
-	for (const { message, sourceIndex: messageIndex, convertedIndex } of convertMessagesForContextView(sourceMessages)) {
+	const convertedMessages = convertMessagesForContextView(sourceMessages);
+	const latestAssistantIndex = convertedMessages.findLastIndex(
+		({ message }) => message.role === "assistant" && isSurvivingAssistant(message, session.model ?? undefined),
+	);
+	for (const { message, sourceIndex: messageIndex, convertedIndex } of convertedMessages) {
 		const original = sourceMessages[messageIndex]!;
 		const execution =
 			original.role === "bashExecution" ? "bash" : original.role === "pythonExecution" ? "python" : undefined;
@@ -262,10 +267,11 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			const reasoningIndexes = message.content.flatMap((block, index) =>
 				block.type === "thinking" || block.type === "redactedThinking" ? [index] : [],
 			);
-			let reasoningBudget = Math.max(
-				0,
-				tokenizer.countMessages([message]) - blockTokens.reduce((sum, tokens) => sum + tokens, 0),
-			);
+			const messageTokens =
+				convertedIndex === latestAssistantIndex
+					? tokenizer.countLatestTurn(message)
+					: tokenizer.countMessage(message);
+			let reasoningBudget = Math.max(0, messageTokens - blockTokens.reduce((sum, tokens) => sum + tokens, 0));
 			for (const [position, index] of reasoningIndexes.entries()) {
 				const block = message.content[index]!;
 				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
