@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { contextFitScale, planContextMap } from "../src/chrome/context-map";
+import { planContextMap } from "../src/chrome/context-map";
 
 describe("context map occupancy", () => {
 	it("chooses the largest overlap and distinguishes a split cell from 70-percent coverage", () => {
@@ -48,12 +48,5 @@ describe("context map occupancy", () => {
 			[100, 1.5, 16],
 		])
 			expect(planContextMap([{ id: "free", tokens: 100 }], window!, cols!, rows!)).toEqual([]);
-	});
-	it("rounds Fit upward to two significant digits within the 10k floor and real window", () => {
-		expect(contextFitScale(12345, 200000)).toBe(15000);
-		expect(contextFitScale(0, 200000)).toBe(10000);
-		expect(contextFitScale(12345, 8192)).toBe(8192);
-		expect(contextFitScale(300000, 200000)).toBe(200000);
-		expect(contextFitScale(100, 0)).toBe(0);
 	});
 });

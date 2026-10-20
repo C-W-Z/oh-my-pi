@@ -2,7 +2,7 @@
 
 Run `/hotkeys` inside an `omp` session for the built-in shortcut reference. Application-action rows reflect remaps loaded from disk; navigation/editing examples use fixed chords. This is not an inventory of extension-registered shortcuts.
 
-Base editor, input, selector, and Context Viewer actions use `tui.editor.*`, `tui.input.*`, `tui.select.*`, and `tui.context.*`; application actions use `app.*`. Definitions live in `packages/tui/src/keybindings.ts` and `packages/tui/src/app-keybindings.ts`.
+Base editor, input, and selector actions use `tui.editor.*`, `tui.input.*`, and `tui.select.*`; application actions use `app.*`. Definitions live in `packages/tui/src/keybindings.ts` and `packages/tui/src/app-keybindings.ts`.
 
 ## Customize keybindings
 
@@ -55,7 +55,6 @@ app.history.search: []
 | `app.agents.hub`             | `Alt+A`                                                               | [Open the Agent Hub](./agent-hub.md)                                                                                                                                                 |
 | `app.tree.previousBranch`    | Unbound                                                               | Jump to the previous visible branch in `/tree` ([details](./tree.md))                                                                                                                |
 | `app.tree.nextBranch`        | Unbound                                                               | Jump to the next visible branch in `/tree` ([details](./tree.md))                                                                                                                    |
-| `tui.context.toggleFit`      | `z`                                                                   | Toggle Window/Fit in the `/context` overview when the map is visible and can be scaled.                                                                                              |
 
 To disable push-to-talk while keeping speech-to-text available through a separate toggle binding:
 

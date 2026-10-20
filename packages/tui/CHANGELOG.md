@@ -7,9 +7,8 @@
 - Added an ANSI and native Context Viewer with category navigation, wrapped entry previews, scrollable full-content inspection, and in-entry scrolling.
 - Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings.
 - Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints.
-- Added `tui.context.toggleFit` to remap or disable the Context Viewer Window/Fit keyboard shortcut.
 - Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata.
-- Context Viewer navigation, open, back/close, and Window/Fit shortcuts and hints honor configured or unbound keys without fixed aliases; the full-content page does not advertise an inactive open action.
+- Context Viewer navigation, open, and back/close shortcuts and hints honor configured or unbound keys without fixed aliases; the full-content page does not advertise an inactive open action.
 - `AutocompleteItem.descriptionMatch` marks a slash command matched only through its description; `Editor` Enter no longer applies such a row unless the user moved the selection onto it ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
 
 ### Fixed

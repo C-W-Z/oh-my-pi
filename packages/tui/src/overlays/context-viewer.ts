@@ -1,6 +1,6 @@
 import { countNewlines, formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
 import type { TspScrollBy, TspSpan } from "@oh-my-pi/pi-wire";
-import { contextFitScale, planContextMap } from "../chrome/context-map";
+import { planContextMap } from "../chrome/context-map";
 import {
 	CONTEXT_PRESENTATION,
 	type ContextCategoryId,
@@ -130,8 +130,6 @@ export class ContextViewer implements Component {
 	});
 	#entry: ContextViewEntry | undefined;
 	#entryParent: "overview" | "category" = "overview";
-	#fit = false;
-	#mapVisible = false;
 	#width = 0;
 	#height = 1;
 	#previewCache:
@@ -412,15 +410,6 @@ export class ContextViewer implements Component {
 		);
 	}
 
-	get #canZoom(): boolean {
-		return (
-			this.#state === "overview" &&
-			this.#mapVisible &&
-			this.#data.usage > 0 &&
-			contextFitScale(this.#data.usage, this.#data.window) < this.#data.window
-		);
-	}
-
 	#mapGeometry(
 		width: number,
 		height: number,
@@ -445,14 +434,13 @@ export class ContextViewer implements Component {
 	}
 
 	#mapCells(columns: number, rows: number) {
-		const scale = this.#fit ? contextFitScale(this.#data.usage, this.#data.window) : this.#data.window;
 		return planContextMap(
 			[
 				...this.#data.categories.map(category => ({ id: category.id, tokens: this.#allocated.get(category) ?? 0 })),
 				{ id: "free" as const, tokens: this.#data.free },
 				{ id: "buffer" as const, tokens: this.#data.buffer },
 			],
-			scale,
+			this.#data.window,
 			columns,
 			rows,
 		);
@@ -460,7 +448,6 @@ export class ContextViewer implements Component {
 
 	#overviewLines(width: number, height: number): string[] {
 		const geometry = this.#mapGeometry(width, height);
-		this.#mapVisible = !!geometry;
 		const listWidth = geometry ? width - geometry.width - 3 : width;
 		const source = this.#overview.items.map(item => this.#legendLine(item, Math.max(0, listWidth - 1)));
 		const diagnostics = contextSnapcompactLines(this.#data.breakdown);
@@ -596,12 +583,10 @@ export class ContextViewer implements Component {
 		const navigation = [editorKey("tui.select.up"), editorKey("tui.select.down")].filter(Boolean).join("/");
 		const confirm = this.#state === "entry" ? "" : editorKey("tui.select.confirm");
 		const cancel = editorKey("tui.select.cancel");
-		const zoom = this.#canZoom ? editorKey("tui.context.toggleFit") : "";
 		const hints = [
 			navigation && `${navigation} select/scroll`,
 			confirm && `${confirm} open`,
 			cancel && `${cancel} ${this.#state === "overview" ? "close" : "back"}`,
-			zoom && `${zoom} Window/Fit`,
 		]
 			.filter(Boolean)
 			.join(" · ");
@@ -688,8 +673,7 @@ export class ContextViewer implements Component {
 			matchesSelectPageDown(data) ||
 			getKeybindings().matches(data, "tui.select.confirm") ||
 			matchesKey(data, "home") ||
-			matchesKey(data, "end") ||
-			(this.#canZoom && getKeybindings().matches(data, "tui.context.toggleFit"))
+			matchesKey(data, "end")
 		);
 	}
 
@@ -721,7 +705,7 @@ export class ContextViewer implements Component {
 				return;
 			}
 			by = last ? "end" : "start";
-		} else if (this.#canZoom && getKeybindings().matches(data, "tui.context.toggleFit")) this.#fit = !this.#fit;
+		}
 		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
 		this.#requestRender();
 	}
@@ -764,7 +748,6 @@ export class ContextViewer implements Component {
 				? node("list", { selected: this.#overview.selectedKey, grow: 1 }, items, "categories")
 				: selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
-			this.#mapVisible = !!geometry;
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
 				const grid: NativeNode[] = [];
@@ -856,7 +839,6 @@ export class ContextViewer implements Component {
 		children.push(
 			actionBar([
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
-				...(this.#canZoom ? [actionButton(this.#fit ? "Window" : "Fit", "zoom")] : []),
 				actionButton("Close", "close"),
 			]),
 		);
@@ -868,7 +850,6 @@ export class ContextViewer implements Component {
 		if (event.type === "action") {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
-			else if (event.act === "zoom" && this.#canZoom) this.#fit = !this.#fit;
 			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
 				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
 				if (!entry) return;

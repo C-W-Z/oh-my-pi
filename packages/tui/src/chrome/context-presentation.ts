@@ -21,13 +21,6 @@ export const CONTEXT_PRESENTATION = {
 	"tool-output": OUTPUT,
 	buffer: { color: "warning", symbol: "context.buffer" },
 	free: { color: "dim", symbol: "context.free" },
-	systemPrompt: SYSTEM,
-	systemContext: INSTRUCTIONS,
-	systemTools: TOOLS,
-	messages: MESSAGES,
 } as const satisfies Record<string, { color: ThemeColor; symbol: SymbolKey }>;
 export type ContextPresentationId = keyof typeof CONTEXT_PRESENTATION;
-export type ContextCategoryId = Exclude<
-	ContextPresentationId,
-	"buffer" | "free" | "systemPrompt" | "systemContext" | "systemTools" | "messages"
->;
+export type ContextCategoryId = Exclude<ContextPresentationId, "buffer" | "free">;

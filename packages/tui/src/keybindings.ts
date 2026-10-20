@@ -40,8 +40,6 @@ export interface Keybindings {
 	"tui.select.pageDown": true;
 	"tui.select.confirm": true;
 	"tui.select.cancel": true;
-	// Context Viewer actions
-	"tui.context.toggleFit": true;
 }
 
 export type Keybinding = keyof Keybindings;
@@ -140,10 +138,6 @@ export const TUI_KEYBINDINGS = {
 	"tui.select.cancel": {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
-	},
-	"tui.context.toggleFit": {
-		defaultKeys: "z",
-		description: "Toggle Fit for the /context context map",
 	},
 } as const satisfies KeybindingDefinitions;
 

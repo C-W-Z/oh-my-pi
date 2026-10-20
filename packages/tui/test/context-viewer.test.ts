@@ -19,7 +19,7 @@ import { sliceWithWidth, visibleWidth } from "../src/utils";
 import { Tokenizer } from "@oh-my-pi/pi-agent-core";
 import { DEFAULT_COMPACTION_SETTINGS } from "@oh-my-pi/pi-agent-core/compaction";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
-import { computeContextBreakdown, ContextUsageView } from "../src/status-line/context-usage";
+import { computeContextBreakdown } from "../src/status-line/context-usage";
 
 const cx = { cols: 100, reduceMotion: false, dark: true, supports: () => false, feature: () => true };
 const meterCx = { ...cx, supports: () => true };
@@ -208,35 +208,27 @@ describe("ContextViewer navigation", () => {
 		}
 	});
 
-	it("remaps opening, returning and zoom without retaining Enter, Escape or z aliases", () => {
+	it("remaps opening and returning without retaining Enter or Escape aliases", () => {
 		const previousBindings = getKeybindings();
 		const h = harness();
 		setKeybindings(
 			new KeybindingsManager(TUI_KEYBINDINGS, {
 				"tui.select.confirm": "o",
 				"tui.select.cancel": "b",
-				"tui.context.toggleFit": "f",
 			}),
 		);
 		try {
 			h.render();
-			for (const key of ["\r", "\x1b", "z"]) {
+			for (const key of ["\r", "\x1b"]) {
 				expect(h.viewer.capturesInput(key)).toBe(false);
 				h.viewer.handleInput(key);
 			}
 			expect(h.closed()).toBe(0);
 			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			const windowView = h.render();
-			for (const key of ["o", "b", "f"]) expect(h.viewer.capturesInput(key)).toBe(true);
-			h.viewer.handleInput("f");
-			expect(h.render()).not.toEqual(windowView);
-			h.viewer.handleInput("f");
-			expect(h.render()).toEqual(windowView);
+			for (const key of ["o", "b"]) expect(h.viewer.capturesInput(key)).toBe(true);
 			select(h.viewer, "tool-output", false);
 			h.viewer.handleInput("o");
 			expect(selected(h.viewer.describe(cx))).toBe("result/0");
-			expect(h.viewer.capturesInput("f")).toBe(false);
-			h.viewer.handleInput("f");
 			h.viewer.handleInput("o");
 			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
 			h.viewer.handleInput("b");
@@ -251,19 +243,18 @@ describe("ContextViewer navigation", () => {
 		}
 	});
 
-	it("keeps Native open, Back, zoom and Close usable when their keyboard actions are unbound", () => {
+	it("keeps Native open, Back and Close usable when their keyboard actions are unbound", () => {
 		const previousBindings = getKeybindings();
 		const h = harness();
 		setKeybindings(
 			new KeybindingsManager(TUI_KEYBINDINGS, {
 				"tui.select.confirm": [],
 				"tui.select.cancel": [],
-				"tui.context.toggleFit": [],
 			}),
 		);
 		try {
 			h.render();
-			for (const key of ["\r", "\x1b", "\x03", "z"]) {
+			for (const key of ["\r", "\x1b", "\x03"]) {
 				expect(h.viewer.capturesInput(key)).toBe(false);
 				h.viewer.handleInput(key);
 			}
@@ -276,9 +267,6 @@ describe("ContextViewer navigation", () => {
 			expect(selected(h.viewer.describe(cx))).toBe("result/0");
 			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
 			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
-			const windowView = h.render();
-			h.viewer.handleNativeEvent({ type: "action", key: "zoom", act: "zoom", mods: [] });
-			expect(h.render()).not.toEqual(windowView);
 			h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
 			expect(h.closed()).toBe(1);
 		} finally {
@@ -673,7 +661,7 @@ describe("ContextViewer presentation", () => {
 		}
 	});
 
-	it("places a stacked meter above selectable categories on meter-capable terminals, without map zoom", () => {
+	it("places a stacked meter above selectable categories on meter-capable terminals", () => {
 		const data = fixture();
 		const h = harness(data);
 		try {
@@ -697,8 +685,6 @@ describe("ContextViewer presentation", () => {
 				const body = root.c?.findIndex(child => "k" in child && child.key === "overview");
 				const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
 				expect(bar).toBeLessThan(body!);
-				expect(all.some(node => node.p?.actions?.click === "zoom")).toBe(false);
-				expect(h.viewer.capturesInput("z")).toBe(false);
 			}
 			select(h.viewer, "tool-output/read");
 			const entry = nodes(h.viewer.describe(meterCx)).find(node => node.key === "entry-result/0");
@@ -706,7 +692,6 @@ describe("ContextViewer presentation", () => {
 			h.viewer.handleInput("\x1b");
 			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
 			expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
-			expect(h.viewer.capturesInput("z")).toBe(true);
 		} finally {
 			h.viewer.dispose();
 		}
@@ -857,38 +842,6 @@ describe("ContextViewer presentation", () => {
 		expect(h.closed()).toBe(1);
 	});
 
-	it("preserves counts and percentage denominators when switching Window/Fit", () => {
-		const h = harness();
-		const windowView = h.render();
-		const before = nodes(h.viewer.describe(cx))
-			.filter(node => node.k === "item")
-			.map(node => node.p);
-		h.viewer.handleInput("z");
-		h.render();
-		const after = nodes(h.viewer.describe(cx))
-			.filter(node => node.k === "item")
-			.map(node => node.p);
-		expect(after).toEqual(before);
-		expect(h.render()).not.toEqual(windowView);
-		h.viewer.handleInput("z");
-		expect(h.render()).toEqual(windowView);
-	});
-
-	it("does not capture zoom for an empty, window-sized or hidden map", () => {
-		for (const [usage, window, width] of [
-			[0, 200000, 100],
-			[80000, 10000, 100],
-			[80000, 200000, 48],
-		]) {
-			const data = fixture();
-			const h = harness({ ...data, usage: usage!, window: window! });
-			const before = h.render(width);
-			expect(h.viewer.capturesInput("z")).toBe(false);
-			h.viewer.handleInput("z");
-			expect(h.render(width)).toEqual(before);
-		}
-	});
-
 	it("resolves map cells and interactive legend swatches from the same live theme, including overrides after invalidate", () => {
 		const base = getBuiltinThemes().dark!;
 		const h = harness();
@@ -954,48 +907,6 @@ describe("ContextViewer presentation", () => {
 		}
 	});
 
-	it("updates the static ANSI legend and native meter/grid swatches with the live theme after invalidate", () => {
-		const breakdown = computeContextBreakdown(
-			{
-				model: getBundledModel("anthropic", "claude-sonnet-4-5"),
-				systemPrompt: ["system source ".repeat(5000)],
-				agent: { tokenizer: new Tokenizer(), state: { tools: [] } },
-				messages: [],
-			},
-			{ compaction: DEFAULT_COMPACTION_SETTINGS },
-		);
-		const view = new ContextUsageView(breakdown, theme);
-		for (const glyph of ["SRC", "next"]) {
-			setThemeInstance(
-				createTheme({
-					...getBuiltinThemes().dark!,
-					symbols: { preset: "ascii", overrides: { "context.content": glyph } },
-					colors: { ...getBuiltinThemes().dark!.colors, accent: glyph === "SRC" ? "#1144cc" : "#cc4411" },
-				}),
-			);
-			view.invalidate();
-			const ansi = view.render(160);
-			const swatch = theme.fg("accent", glyph);
-			expect(ansi.slice(0, 10).some(line => line.includes(swatch))).toBe(true);
-			expect(ansi.some(line => Bun.stripANSI(line).includes("System prompt:") && line.includes(swatch))).toBe(true);
-			const native = nodes(view.describe(meterCx));
-			expect(
-				native.some(
-					node => node.k === "text" && node.p?.spans?.some(span => span.t === glyph && span.s === "accent"),
-				),
-			).toBe(true);
-			const fallback = nodes(view.describe({ ...cx, supports: () => false }));
-			expect(
-				fallback
-					.filter(node => node.key?.startsWith("row-"))
-					.some(
-						node =>
-							node.k === "text" && node.p?.spans?.some(span => span.t.trim() === glyph && span.s === "accent"),
-					),
-			).toBe(true);
-		}
-	});
-
 	it("conserves Used across top-level allocations and splits only the parent's budget among children", () => {
 		const data = fixture();
 		const categories = data.categories.filter(category => category.tokens > 0);
@@ -1058,25 +969,18 @@ describe("ContextViewer presentation", () => {
 		for (const category of data.categories) category.tokens = 0;
 		const h = harness({ ...data, estimatedTokens: 0 });
 		expect(h.render(160).join("\n")).toContain("85K");
-		expect(h.viewer.capturesInput("z")).toBe(false);
 		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(textValue(items.find(node => node.key === "system-prompt")?.p?.value)).toBe("—");
 		const zero = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
 		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
-		expect(zero.viewer.capturesInput("z")).toBe(false);
 		const over = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
 		expect(over.render(160)[1]).toMatch(/15.*10.*150%/);
 		const top = nodes(over.viewer.describe(cx)).find(node => node.key === "system-prompt");
 		expect(top?.k === "item" && textValue(top.p?.value)).toBe("4 · 40.0%");
 	});
 
-	it("uses Used rather than raw estimates to enable Fit, including a zero-usage allocation", () => {
+	it("keeps a zero-usage allocation at zero without hiding free capacity", () => {
 		const data = fixture();
-		const h = harness({ ...data, usage: 20000, estimatedTokens: 400000 });
-		const windowView = h.render();
-		expect(h.viewer.capturesInput("z")).toBe(true);
-		h.viewer.handleInput("z");
-		expect(h.render()).not.toEqual(windowView);
 		const zero = harness({ ...data, usage: 0, buffer: 20000, free: 180000 });
 		const values = nodes(zero.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(values.find(node => node.key === "tool-output")?.p?.value).toBe("0 · 0.0%");

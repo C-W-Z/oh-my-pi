@@ -101,8 +101,7 @@ primary bound key and omits unbound actions. Open content with
 `tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
 (Esc or Ctrl+C by default). Enter and Esc are not fixed aliases.
 Oversized entries scroll before selection advances; full content supports
-Home/End. In the overview, `tui.context.toggleFit` (`z` by default) toggles
-Window/Fit when available, without changing the denominator used by percentages.
+Home/End.
 These bindings accept multiple keys or `[]` to disable the keyboard action.
 Browsing does not submit the composer draft or interrupt a background turn. The
 snapshot stays unchanged while open; close and reopen it to refresh.

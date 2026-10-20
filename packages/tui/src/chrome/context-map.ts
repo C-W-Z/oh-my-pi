@@ -55,11 +55,3 @@ export function planContextMap<T>(
 	}
 	return cells;
 }
-
-/** Round the fit scale up to two significant digits; percentages still use the actual context window. */
-export function contextFitScale(estimatedTokens: number, window: number): number {
-	if (!Number.isFinite(window) || window <= 0) return 0;
-	const desired = Math.max(10_000, Math.max(0, estimatedTokens) * 1.15);
-	const unit = 10 ** (Math.floor(Math.log10(desired)) - 1);
-	return Math.min(window, Math.ceil(desired / unit) * unit);
-}
