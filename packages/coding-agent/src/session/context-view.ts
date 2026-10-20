@@ -3,7 +3,12 @@ import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { isSurvivingAssistant } from "@oh-my-pi/pi-ai/providers/transform-messages";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
-import type { ContextViewCategory, ContextViewData, ContextViewEntry } from "@oh-my-pi/pi-tui/overlays/context-viewer";
+import type {
+	ContextViewCategory,
+	ContextViewData,
+	ContextViewEntry,
+	ContextViewSourceMarker,
+} from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
@@ -11,6 +16,7 @@ import { convertMessagesForContextView } from "./messages";
 
 const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["system-prompt", "System Prompt"],
+	["instruction-files", "Instruction Files"],
 	["skills", "Skills"],
 	["built-in-tools", "Built-in Tools"],
 	["custom-tools", "Custom Tools"],
@@ -64,23 +70,134 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	const tokenizer = session.agent.tokenizer;
 	const categories: ContextViewCategory[] = CATEGORIES.map(([id, label]) => ({ id, label, tokens: 0, entries: [] }));
 	const byId = new Map(categories.map(category => [category.id, category]));
+	const notices: string[] = [];
 	const add = (category: ContextCategoryId, entry: ContextViewEntry): void => {
 		const target = byId.get(category)!;
 		target.entries.push(entry);
 		target.tokens += entry.tokens;
 	};
-	for (const [index, block] of session.systemPrompt.entries()) {
-		add("system-prompt", {
-			id: `system-prompt/${index}`,
-			label: `System Block ${index + 1}`,
-			text: block,
-			tokens: tokenizer.countTokens(block),
-		});
+	const effective = session.systemPrompt;
+	const metadata = session.systemPromptSources;
+	let incomplete = false;
+	type Claim = {
+		start: number;
+		end: number;
+		placeholder: string;
+		category: ContextCategoryId;
+		source: NonNullable<typeof metadata>["sources"][number];
+		ambiguous: boolean;
+	};
+	const claimed = new Map<number, Claim[]>();
+	if (metadata) {
+		const blockCounts = (blocks: readonly string[]): Map<string, number> => {
+			const counts = new Map<string, number>();
+			for (const block of blocks) counts.set(block, (counts.get(block) ?? 0) + 1);
+			return counts;
+		};
+		const builtCounts = blockCounts(metadata.blocks);
+		const effectiveCounts = blockCounts(effective);
+		const idCounts = new Map<string, number>();
+		for (const source of metadata.sources) idCounts.set(source.id, (idCounts.get(source.id) ?? 0) + 1);
+		const candidates = new Map<number, Claim[]>();
+		for (const source of metadata.sources) {
+			if (!source.fragment) {
+				incomplete = true;
+				continue;
+			}
+			// An unpaired generated fragment still reserves all possible locations,
+			// so another source cannot claim overlapping ambiguous content.
+			const indices =
+				source.blockIndex < 0
+					? metadata.blocks.flatMap((block, index) => (block.includes(source.fragment) ? [index] : []))
+					: [source.blockIndex];
+			if (source.blockIndex < 0) incomplete = true;
+			for (const index of indices) {
+				const block = metadata.blocks[index];
+				// Do not remap reordered policy blocks, even when their text is unchanged.
+				if (
+					block === undefined ||
+					effective[index] !== block ||
+					builtCounts.get(block) !== 1 ||
+					effectiveCounts.get(block) !== 1
+				) {
+					incomplete = true;
+					continue;
+				}
+				const first = block.indexOf(source.fragment);
+				if (first < 0) {
+					incomplete = true;
+					continue;
+				}
+				const ambiguous =
+					source.blockIndex < 0 || idCounts.get(source.id) !== 1 || block.indexOf(source.fragment, first + 1) >= 0;
+				if (ambiguous) incomplete = true;
+				const ranges = candidates.get(index) ?? [];
+				for (let start = first; start >= 0; start = block.indexOf(source.fragment, start + 1)) {
+					ranges.push({
+						start,
+						end: start + source.fragment.length,
+						placeholder: `[Shown in ${byId.get(source.kind)!.label}: ${source.label}]`,
+						category: source.kind,
+						source,
+						ambiguous,
+					});
+				}
+				candidates.set(index, ranges);
+			}
+		}
+		for (const [index, ranges] of candidates) {
+			// Validate the complete set before publishing: every participant in an
+			// overlap is ambiguous, regardless of category or metadata order.
+			const accepted = ranges.filter(range => {
+				const overlaps = ranges.some(
+					other => other !== range && range.start < other.end && range.end > other.start,
+				);
+				if (overlaps) incomplete = true;
+				return !range.ambiguous && !overlaps;
+			});
+			claimed.set(index, accepted);
+			for (const { source } of accepted) {
+				add(source.kind, {
+					id: `${source.kind}/${source.id}`,
+					label: source.label,
+					path: source.path,
+					text: source.fragment,
+					tokens: tokenizer.countTokens(source.fragment),
+				});
+			}
+		}
 	}
-	const skills = byId.get("skills")!;
-	skills.tokens = breakdown.categories.find(category => category.id === "skills")!.tokens;
-	const systemPrompt = byId.get("system-prompt")!;
-	systemPrompt.tokens = Math.max(0, systemPrompt.tokens - skills.tokens);
+	for (const [index, block] of effective.entries()) {
+		let cursor = 0;
+		const fragments: string[] = [];
+		const display: string[] = [];
+		const sourceMarkers: ContextViewSourceMarker[] = [];
+		let displayOffset = 0;
+		for (const range of (claimed.get(index) ?? []).sort((a, b) => a.start - b.start)) {
+			const before = block.slice(cursor, range.start);
+			fragments.push(before);
+			const start = displayOffset + before.length;
+			const end = start + range.placeholder.length;
+			sourceMarkers.push({ start, end, category: range.category });
+			displayOffset = end;
+			display.push(before, range.placeholder);
+			cursor = range.end;
+		}
+		const tail = block.slice(cursor);
+		fragments.push(tail);
+		display.push(tail);
+		const remaining = fragments.join("");
+		// Display-only source markers do not contribute to prompt token estimates.
+		if (display.length > 1 || remaining)
+			add("system-prompt", {
+				id: `system-prompt/${index}`,
+				label: `System Block ${index + 1}`,
+				text: display.join(""),
+				tokens: tokenizer.countTokens(remaining),
+				sourceMarkers: sourceMarkers.length ? sourceMarkers : undefined,
+			});
+	}
+	if (incomplete) notices.push("Some prompt sources could not be attributed; their content remains in System Prompt.");
 
 	const infos = new Map(session.getAllToolInfos().map(info => [info.name, info.sourceInfo]));
 	for (const [index, tool] of session.agent.state.tools.entries()) {
@@ -272,6 +389,6 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		free: breakdown.freeTokens,
 		breakdown,
 		categories,
-		notices: [],
+		notices,
 	};
 }

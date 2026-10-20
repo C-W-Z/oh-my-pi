@@ -35,6 +35,13 @@ import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
 
+/** UTF-16 offsets into entry text for a viewer-generated source marker. */
+export interface ContextViewSourceMarker {
+	readonly start: number;
+	readonly end: number;
+	readonly category: ContextCategoryId;
+}
+
 export interface ContextViewEntry {
 	readonly id: string;
 	readonly label: string;
@@ -44,6 +51,7 @@ export interface ContextViewEntry {
 	readonly info?: string;
 	readonly timestamp?: number;
 	readonly callId?: string;
+	readonly sourceMarkers?: readonly ContextViewSourceMarker[];
 }
 
 export interface ContextViewCategory {
@@ -191,7 +199,7 @@ export class ContextViewer implements Component {
 				id: category.id,
 				label: category.label,
 				tokens: this.#allocated.get(category),
-				category: category.id === "skills" ? undefined : category,
+				category,
 			});
 			for (const child of category.children ?? [])
 				rows.push({
@@ -199,7 +207,7 @@ export class ContextViewer implements Component {
 					id: category.id,
 					label: child.label,
 					tokens: this.#allocated.get(child),
-					category: category.id === "skills" || child.id === "skills" ? undefined : child,
+					category: child,
 					child: true,
 				});
 		}
@@ -247,10 +255,31 @@ export class ContextViewer implements Component {
 		return replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n")));
 	}
 
+	#formatEntryText(entry: ContextViewEntry, limit = entry.text.length): string {
+		if (!entry.sourceMarkers?.length) return this.#safeContent(entry.text.slice(0, limit));
+		const parts: string[] = [];
+		let cursor = 0;
+		for (const marker of entry.sourceMarkers) {
+			if (marker.start >= limit) break;
+			parts.push(this.#safeContent(entry.text.slice(cursor, marker.start)));
+			const end = Math.min(marker.end, limit);
+			const color = CONTEXT_PRESENTATION[marker.category].color;
+			parts.push(
+				this.#safeContent(entry.text.slice(marker.start, end))
+					.split("\n")
+					.map(line => theme.fg(color, line))
+					.join("\n"),
+			);
+			cursor = end;
+		}
+		parts.push(this.#safeContent(entry.text.slice(cursor, limit)));
+		return parts.join("");
+	}
+
 	#entryText(entry: ContextViewEntry): string {
 		let value = this.#safeEntries.get(entry.id);
 		if (value === undefined) {
-			value = this.#safeContent(entry.text);
+			value = this.#formatEntryText(entry);
 			this.#safeEntries.set(entry.id, value);
 		}
 		return value;
@@ -272,8 +301,10 @@ export class ContextViewer implements Component {
 		width: number,
 		budget: number,
 	): { lines: string[]; complete: boolean; hiddenLines: number } {
+		if (this.#category?.id === "skills")
+			return { lines: this.#entryLines(entry, width), complete: true, hiddenLines: 0 };
 		const prefixLength = Math.min(entry.text.length, Math.max(1, width) * budget * 2);
-		const paragraphs = this.#safeContent(entry.text.slice(0, prefixLength)).split("\n");
+		const paragraphs = this.#formatEntryText(entry, prefixLength).split("\n");
 		const lines: string[] = [];
 		let shownSourceLines = 0;
 		for (const [index, paragraph] of paragraphs.entries()) {
@@ -294,11 +325,16 @@ export class ContextViewer implements Component {
 	}
 
 	#entryLabel(entry: ContextViewEntry): string {
-		return this.#safe(shortenPath(entry.label)).replace(/\n/g, " ");
+		const label = this.#category?.id === "instruction-files" ? (entry.path ?? entry.label) : entry.label;
+		return this.#safe(shortenPath(label)).replace(/\n/g, " ");
 	}
 
 	#entryInfo(entry: ContextViewEntry): string {
-		return this.#safe([entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "));
+		return this.#safe(
+			[entry.info, this.#category?.id !== "instruction-files" && entry.path ? shortenPath(entry.path) : undefined]
+				.filter(Boolean)
+				.join(" · "),
+		);
 	}
 	#entryMetadata(entry: ContextViewEntry): string[] {
 		return [

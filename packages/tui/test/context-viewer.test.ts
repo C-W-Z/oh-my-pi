@@ -104,6 +104,7 @@ function fixture(): ContextViewData {
 				tokens: 20000,
 				entries: [{ id: "system/0", label: "system block", tokens: 20000, text: "entire system source" }],
 			},
+			{ id: "instruction-files", label: "Instruction Files", tokens: 0, entries: [] },
 			{
 				id: "skills",
 				label: "Skills",
@@ -116,7 +117,6 @@ function fixture(): ContextViewData {
 				tokens: 10000,
 				entries: [{ id: "tool/0", label: "builtin read", tokens: 10000, text: "schema definition" }],
 			},
-			{ id: "custom-tools", label: "Custom Tools", tokens: 0, entries: [] },
 			{
 				id: "user-messages",
 				label: "User Messages",
@@ -175,11 +175,11 @@ describe("ContextViewer navigation", () => {
 			try {
 				h.render();
 				for (const key of ["\x1b[A", "\x1b[B", "\x10", "\x0e", "k", "j"]) {
-					select(h.viewer, "built-in-tools", false);
+					select(h.viewer, "instruction-files", false);
 					expect(h.viewer.capturesInput(key)).toBe(key === up || key === down);
 					h.viewer.handleInput(key);
 					expect(selected(h.viewer.describe(cx))).toBe(
-						key === up ? "system-prompt" : key === down ? "custom-tools" : "built-in-tools",
+						key === up ? "system-prompt" : key === down ? "skills" : "instruction-files",
 					);
 				}
 			} finally {
@@ -188,38 +188,6 @@ describe("ContextViewer navigation", () => {
 			}
 		});
 	}
-	it("keeps Skills token totals visible while native and keyboard navigation cannot focus or open them", () => {
-		const h = harness();
-		try {
-			expect(h.render().find(line => line.includes("Skills"))).toMatch(/Skills\s+11K 5\.3%/);
-			for (const context of [cx, meterCx]) {
-				const root = h.viewer.describe(context);
-				const skills = nodes(root).find(node => node.key === "skills");
-				if (skills?.k !== "item") throw new Error("Missing Skills overview row");
-				expect(textValue(skills.p?.label)).toContain("Skills");
-				expect(textValue(skills.p?.value)).toBe("11K · 5.3%");
-				for (const activate of [false, true]) {
-					select(h.viewer, "skills", activate);
-					const unchanged = h.viewer.describe(context);
-					expect(selected(unchanged)).toBe("system-prompt");
-					expect(nodes(unchanged).some(node => node.key === "overview")).toBe(true);
-					expect(nodes(unchanged).some(node => node.key === "entry-skill/0")).toBe(false);
-				}
-			}
-			h.viewer.handleInput("\x1b[B");
-			expect(selected(h.viewer.describe(cx))).toBe("built-in-tools");
-			h.viewer.handleInput("\r");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-tool/0")).toBe(true);
-			h.viewer.handleInput("\x1b");
-			h.viewer.handleInput("\x1b[A");
-			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			h.viewer.handleInput("\r");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-system/0")).toBe(true);
-		} finally {
-			h.viewer.dispose();
-		}
-	});
-
 	it("shows the confirm hint only on pages where confirm opens content", () => {
 		const h = harness();
 		try {
@@ -336,7 +304,7 @@ describe("ContextViewer navigation", () => {
 		h.viewer.handleInput("\x1b");
 		h.render();
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/read");
-		select(h.viewer, "custom-tools");
+		select(h.viewer, "instruction-files");
 		h.render();
 		expect(nodes(h.viewer.describe(cx)).filter(node => node.k === "item")).toEqual([]);
 		h.viewer.handleInput("\x1b");
@@ -388,17 +356,11 @@ describe("ContextViewer navigation", () => {
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output");
 	});
 
-	it("scrolls Native multiline metadata before changing selection and restores the category viewport after Back", () => {
+	it("scrolls Native multiline previews before changing selection and restores the category viewport after Back", () => {
 		const data = fixture();
-		data.categories.find(category => category.id === "tool-output")!.entries = [
-			{
-				id: "result/0",
-				label: "long output",
-				tokens: 1,
-				info: "output detail\n".repeat(60),
-				text: "native-output-tail",
-			},
-			{ id: "result/1", label: "next output", tokens: 1, text: "next body" },
+		data.categories.find(category => category.id === "skills")!.entries = [
+			{ id: "skill/0", label: "long skill", tokens: 1, text: `${"routing hint\n".repeat(60)}native-skill-tail` },
+			{ id: "skill/1", label: "next skill", tokens: 1, text: "next routing hint" },
 		];
 		const h = harness(data);
 		h.resize(12);
@@ -412,7 +374,7 @@ describe("ContextViewer navigation", () => {
 			return ops;
 		};
 		reconcile();
-		select(h.viewer, "tool-output");
+		select(h.viewer, "skills");
 		reconcile();
 		const preview = nodes(h.viewer.describe(nativeCx));
 		const body = preview.find(node => node.key === "entries")!;
@@ -427,7 +389,7 @@ describe("ContextViewer navigation", () => {
 			h.viewer.handleInput(key);
 			const ops = reconcile();
 			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual([by]);
-			expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
+			expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
 		}
 		h.viewer.handleInput("\x1b[B");
 		reconcile();
@@ -436,7 +398,7 @@ describe("ContextViewer navigation", () => {
 		reconcile();
 		h.viewer.handleInput("\x1b[F");
 		reconcile();
-		expect(h.render(48).join("\n")).toContain("native-output-tail");
+		expect(h.render(48).join("\n")).toContain("native-skill-tail");
 		h.viewer.handleInput("\x1b");
 		const restored = reconcile();
 		expect(restored.some(op => op[0] === "reveal" && op[2] === "start")).toBe(true);
@@ -447,7 +409,7 @@ describe("ContextViewer navigation", () => {
 		for (let step = 0; step < 80; step++) {
 			h.viewer.handleInput("\x1b[B");
 			const ops = reconcile();
-			if (selected(h.viewer.describe(nativeCx)) === "result/1") {
+			if (selected(h.viewer.describe(nativeCx)) === "skill/1") {
 				expect(ops.some(op => op[0] === "scroll")).toBe(false);
 				expect(ops.some(op => op[0] === "reveal")).toBe(true);
 				changed = true;
@@ -456,24 +418,16 @@ describe("ContextViewer navigation", () => {
 			expect(ops.some(op => op[0] === "scroll" && op[2] === "line-down")).toBe(true);
 		}
 		expect(changed).toBe(true);
-		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "select-entry", mods: [] });
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/skill/0", act: "select-entry", mods: [] });
 		reconcile();
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
 	});
 
 	it("clamps a Native page step to the selected entry tail before advancing selection", () => {
 		const data = fixture();
-		data.categories.find(category => category.id === "tool-output")!.entries = [
-			{
-				id: "result/0",
-				label: "first",
-				tokens: 1,
-				path: "/fixture/output.txt",
-				callId: "call-first",
-				timestamp: 0,
-				text: `${"body\n".repeat(5)}partial-page-tail`,
-			},
-			{ id: "result/1", label: "next", tokens: 1, text: "next body" },
+		data.categories.find(category => category.id === "skills")!.entries = [
+			{ id: "skill/0", label: "first", tokens: 1, text: `${"body\n".repeat(9)}partial-page-tail` },
+			{ id: "skill/1", label: "next", tokens: 1, text: "next body" },
 		];
 		const h = harness(data);
 		h.resize(12);
@@ -481,16 +435,16 @@ describe("ContextViewer navigation", () => {
 		const reconciler = new Reconciler("context-boundary");
 		const regions = { main: [h.viewer], dock: [], layer: [] };
 		reconciler.reconcile(regions, nativeCx);
-		select(h.viewer, "tool-output");
+		select(h.viewer, "skills");
 		reconciler.reconcile(regions, nativeCx);
 		h.viewer.handleInput("\x1b[6~");
 		const scrolls = reconciler.reconcile(regions, nativeCx).filter(op => op[0] === "scroll");
-		expect(scrolls.map(op => op[2])).toEqual(["line-down", "line-down"]);
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
+		expect(scrolls.map(op => op[2])).toEqual(["line-down", "line-down", "line-down"]);
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/0");
 		expect(h.render(48).join("\n")).toContain("partial-page-tail");
 		h.viewer.handleInput("\x1b[6~");
 		expect(reconciler.reconcile(regions, nativeCx).some(op => op[0] === "scroll")).toBe(false);
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
+		expect(selected(h.viewer.describe(nativeCx))).toBe("skill/1");
 	});
 
 	it("handles native select/activate/Back/Close and emits repeated terminal scroll requests", () => {
@@ -516,6 +470,34 @@ describe("ContextViewer navigation", () => {
 });
 
 describe("ContextViewer preview boundaries", () => {
+	it("keeps a long skill hint scrollable in its category without requiring a full-content level", () => {
+		const data = fixture();
+		const skills = data.categories.find(category => category.id === "skills")!;
+		skills.entries = [
+			{
+				id: "skill/0",
+				label: "long skill",
+				tokens: 100,
+				path: "/fixture/skills/long/SKILL.md",
+				text: `${"routing hint\n".repeat(60)}skill-description-tail`,
+			},
+			{ id: "skill/1", label: "next skill", tokens: 1, text: "next routing hint" },
+		];
+		const h = harness(data);
+		h.resize(12);
+		h.render(48);
+		select(h.viewer, "skills");
+		let screen = h.render(48).join("\n");
+		for (let index = 0; index < 70 && !screen.includes("skill-description-tail"); index++) {
+			h.viewer.handleInput("\x1b[B");
+			screen = h.render(48).join("\n");
+		}
+		expect(screen).toContain("skill-description-tail");
+		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("skill/0");
+		h.viewer.handleInput("\x1b");
+		expect(selected(h.viewer.describe(cx))).toBe("skills");
+	});
+
 	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
 		const data = fixture();
 		const output = data.categories.find(category => category.id === "tool-output")!;
@@ -642,6 +624,7 @@ describe("ContextViewer presentation", () => {
 					color: CONTEXT_PRESENTATION["system-prompt"].color,
 					bar: "System Prompt ·",
 				},
+				{ row: item("instruction-files"), glyph: "■", color: CONTEXT_PRESENTATION["instruction-files"].color },
 				{ row: item("skills"), glyph: "■", color: CONTEXT_PRESENTATION.skills.color },
 				{
 					row: item("tool-output/read"),
@@ -729,6 +712,69 @@ describe("ContextViewer presentation", () => {
 			expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
 		} finally {
 			h.viewer.dispose();
+		}
+	});
+
+	it("colors only attributed source markers in previews and full content, including native spans and theme changes", () => {
+		const base = getBuiltinThemes().dark!;
+		setThemeInstance(
+			createTheme({
+				...base,
+				colors: { ...base.colors, success: "#12a345", customMessageLabel: "#ab34de" },
+			}),
+		);
+		const data = fixture();
+		const skillMarker = "[Shown in Skills: fixture]";
+		const fileMarker = "[Shown in Instruction Files: rules]";
+		const literalMarker = "[Shown in Skills: literal]";
+		const markers = [
+			["skills", skillMarker],
+			["instruction-files", fileMarker],
+		] as const;
+		const content = `\tplain\x1b[31m text\x1b[0m\n${literalMarker}\n${skillMarker}\n${fileMarker}\nsuffix`;
+		data.categories[0]!.entries = [
+			{
+				id: "source",
+				label: "source",
+				tokens: 1,
+				text: content,
+				sourceMarkers: markers.map(([category, marker]) => ({
+					start: content.indexOf(marker),
+					end: content.indexOf(marker) + marker.length,
+					category,
+				})),
+			},
+			{ id: "other", label: "other", tokens: 1, text: "other block" },
+		];
+		const h = harness(data);
+		h.resize(40);
+		h.render(160);
+		select(h.viewer, "system-prompt");
+		for (const page of ["preview", "full", "theme-change"]) {
+			if (page === "full") h.viewer.handleInput("\r");
+			if (page === "theme-change") {
+				setThemeInstance(
+					createTheme({
+						...base,
+						colors: { ...base.colors, success: "#3456ab", customMessageLabel: "#de7812" },
+					}),
+				);
+				h.viewer.invalidate();
+			}
+			const ansi = h.viewer.render(160).join("\n");
+			const spans = nodes(h.viewer.describe({ ...cx, cols: 160 })).flatMap(node =>
+				node.k === "text" ? (node.p?.spans ?? []) : [],
+			);
+			for (const [category, marker] of markers) {
+				const color = CONTEXT_PRESENTATION[category].color;
+				expect(ansi).toContain(theme.fg(color, marker));
+				expect(spans.find(span => span.t === marker)?.s).toBe(color);
+			}
+			expect(ansi).not.toContain(theme.fg(CONTEXT_PRESENTATION.skills.color, literalMarker));
+			expect(spans.some(span => span.t.includes(literalMarker) && span.s === undefined)).toBe(true);
+			expect(spans.some(span => span.t.includes("suffix") && span.s === undefined)).toBe(true);
+			expect(Bun.stripANSI(ansi)).toContain("plain text");
+			expect(ansi).not.toContain("\t");
 		}
 	});
 

@@ -67,7 +67,7 @@ Argument handling:
 ### Interactive context viewer
 
 `/context` opens a read-only snapshot of the active context: the current system
-prompt, active tools, and live messages, with a separate Skills token estimate.
+prompt, loaded instruction and skill fragments, active tools, and live messages.
 The viewer's independent conversion entry point shares the base `convertToLlm`
 conversion core without reading or populating production conversion caches.
 Source and converted-message indices preserve attribution across omitted inputs
@@ -81,12 +81,18 @@ encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cw
 injection are outside the base message projection. Category token counts and
 allocation shares are estimates, not exact final wire counts.
 
-System Prompt entries show the full effective prompt blocks, including loaded
-instruction files and skill descriptions. Skills is an estimate-only overview row
-and cannot be opened. Its estimate uses the same exposed skill names and
-descriptions as the context usage display, excluding hidden skills and skills
-unavailable to the active tool roster. The System Prompt estimate subtracts the
-Skills estimate to avoid counting it twice.
+System Prompt entries replace attributed instruction-file and skill fragments
+with `[Shown in <category>: <source>]` markers at their original positions,
+colored with the corresponding category's theme color.
+The fragments remain in the provider-facing system prompt and are displayed in
+their own categories, including when a literal custom prompt is active. Markers
+are viewer-only and do not contribute to token estimates. A source is attributed
+only when its prompt block is unchanged at its original index, unique in both
+the built and effective prompts, and contains one non-overlapping occurrence of
+its fragment. Missing, repeated, overlapping, moved, or changed sources remain
+in System Prompt with an incomplete-attribution notice rather than a guessed
+source. Prompt rebuilds and session switches commit source metadata with the
+corresponding prompt; failed switches restore both.
 
 Assistant Thinking includes reasoning retained only in replayable provider
 payloads, displayed as an encoded-thinking placeholder without exposing payloads
@@ -118,8 +124,8 @@ fits. Native category previews use wrapping text blocks: click a block to select
 it and double-click to open it. Back or the configured cancel action from full
 content restores the category's selection and preview position. Native buttons
 and activation remain available when the corresponding keyboard actions are
-unbound. Empty inspectable categories remain accessible; categories with one entry
-open full content directly. Skills remains estimate-only.
+unbound. Empty categories remain accessible; categories with one entry open full
+content directly.
 
 ### Launch flags
 

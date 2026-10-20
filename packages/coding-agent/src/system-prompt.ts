@@ -23,6 +23,9 @@ import { InternalUrlRouter } from "./internal-urls/router";
 import type { SchemeHost } from "./internal-urls/types";
 import activeRepoContextTemplate from "./prompts/system/active-repo-context.md" with { type: "text" };
 import customSystemPromptTemplate from "./prompts/system/custom-system-prompt.md" with { type: "text" };
+import contextFileTemplate from "./prompts/system/context-file.md" with { type: "text" };
+import contextSkillTemplate from "./prompts/system/context-skill.md" with { type: "text" };
+import customContextSkillTemplate from "./prompts/system/custom-context-skill.md" with { type: "text" };
 import defaultPersonality from "./prompts/system/personalities/default.md" with { type: "text" };
 import friendlyPersonality from "./prompts/system/personalities/friendly.md" with { type: "text" };
 import pragmaticPersonality from "./prompts/system/personalities/pragmatic.md" with { type: "text" };
@@ -593,10 +596,29 @@ export interface BuildSystemPromptOptions {
 	subagent?: boolean;
 }
 
+/** Read-only sources committed with the built blocks, without inferring structure from the effective prompt. */
+export interface SystemPromptSource {
+	readonly id: string;
+	/** Original built block index, or -1 when the rendered fragment has no unique location. */
+	readonly blockIndex: number;
+	readonly kind: "instruction-files" | "skills";
+	readonly label: string;
+	readonly path?: string;
+	/** Rendered prompt text, without viewer-only display markers. */
+	readonly fragment: string;
+}
+
+export interface SystemPromptSources {
+	readonly blocks: readonly string[];
+	readonly sources: readonly SystemPromptSource[];
+}
+
 /** Result of building provider-facing system prompt messages. */
 export interface BuildSystemPromptResult {
 	/** Ordered system prompt blocks. Providers should preserve entries as distinct messages/blocks. */
 	systemPrompt: string[];
+	/** Sources rendered by this build, valid only for unique identical blocks at their original indices. */
+	sources?: SystemPromptSources;
 	/**
 	 * Names of `xd://` devices whose catalog/protocol section this prompt renders.
 	 * Empty/undefined when no catalog was emitted (no mounted devices, or a custom
@@ -608,6 +630,9 @@ export interface BuildSystemPromptResult {
 }
 
 /** Static wrapper; compiled (not rendered) so user-authored Markdown passes through byte-for-byte. */
+const renderContextFile = prompt.compile(contextFileTemplate.trimEnd());
+const renderContextSkill = prompt.compile(contextSkillTemplate.trimEnd());
+const renderCustomContextSkill = prompt.compile(customContextSkillTemplate.trimEnd());
 const renderUserAppend = prompt.compile(userAppendPromptTemplate.trimEnd());
 
 /**
@@ -951,6 +976,15 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 	];
 	const injectedAlwaysApplyRules = dedupeAlwaysApplyRules(alwaysApplyRules, promptSources);
 
+	const renderedContextFiles = contextFiles.map(file => ({
+		...file,
+		contextViewerFragment: renderContextFile(file),
+	}));
+	const renderSkill = resolvedCustomPrompt ? renderCustomContextSkill : renderContextSkill;
+	const renderedSkillItems = filteredSkills.map(skill => ({
+		...skill,
+		contextViewerFragment: renderSkill({ name: skill.name, description: skill.description }),
+	}));
 	const environment = getEnvironmentInfo();
 	const data = {
 		systemPromptCustomization: effectiveSystemPromptCustomization,
@@ -963,12 +997,12 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		toolListMode,
 		toolRefs,
 		environment,
-		contextFiles,
+		contextFiles: renderedContextFiles,
 		agentsMdSearch: { files: agentsMdFiles },
 		workspaceTree,
 		hasSkillUriAccess,
 		internalUrls: InternalUrlRouter.instance().describe(schemeHost),
-		skills: filteredSkills,
+		skills: renderedSkillItems,
 		rules: rules ?? [],
 		alwaysApplyRules: injectedAlwaysApplyRules,
 		cwd: promptCwd,
@@ -1042,5 +1076,43 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		!resolvedCustomPrompt && xdevTools.length > 0 && rendered.includes("xd://")
 			? xdevTools.map(mounted => mounted.name)
 			: undefined;
-	return { systemPrompt, xdevCatalogNames };
+	const sourceBlockIndex = (fragment: string): number => {
+		if (!fragment) return -1;
+		let found = -1;
+		for (const [index, block] of systemPrompt.entries()) {
+			const start = block.indexOf(fragment);
+			if (start < 0) continue;
+			if (found >= 0 || block.indexOf(fragment, start + 1) >= 0) return -1;
+			found = index;
+		}
+		return found;
+	};
+	const sources: SystemPromptSources = {
+		blocks: systemPrompt.slice(),
+		sources: [
+			...renderedContextFiles.map((file, index): SystemPromptSource => {
+				const fragment = prompt.format(file.contextViewerFragment, { renderPhase: "post-render" }).trim();
+				return {
+					id: `instruction-${index}`,
+					blockIndex: sourceBlockIndex(fragment),
+					kind: "instruction-files",
+					label: file.path,
+					path: file.path,
+					fragment,
+				};
+			}),
+			...renderedSkillItems.map((skill, index): SystemPromptSource => {
+				const fragment = prompt.format(skill.contextViewerFragment, { renderPhase: "post-render" }).trim();
+				return {
+					id: `skill-${index}`,
+					blockIndex: sourceBlockIndex(fragment),
+					kind: "skills",
+					label: skill.name,
+					path: skill.filePath,
+					fragment,
+				};
+			}),
+		],
+	};
+	return { systemPrompt, xdevCatalogNames, sources };
 }

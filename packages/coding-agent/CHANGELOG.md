@@ -4,14 +4,15 @@
 
 ### Added
 
-- Added a read-only interactive /context viewer for inspecting active prompts, tools, conversation messages, thinking blocks, and tool output, with an estimate-only Skills row, available even before the first message ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Added a read-only interactive /context viewer for inspecting active prompts, instruction files, skills, tools, conversation messages, thinking blocks, and tool output, available even before the first message ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Added on-demand context snapshots with source attribution across omitted and split messages, canonical tool names, and replay-aware thinking estimates without changing production conversion caches ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-
+- System Prompt entries in `/context` mark attributed instruction files and skills without charging display-marker tokens; ambiguous, overlapping, moved, or changed sources remain in System Prompt with an incomplete-attribution notice ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 ### Fixed
 
 - `/context` includes retained reasoning in the latest Anthropic assistant turn's thinking estimate, including turns with abandoned tool calls.
 - `/context` shows retained Anthropic web-search and tool-search calls and results with call IDs, omitting known unreadable replay fields for readability.
+- `/context` retains instruction-file and skill attribution when SDK prompt callbacks preserve the default prompt blocks.
 - Fixed `read` middle-eliding large file pages into an artifact; a page past the output spill threshold now stops at a line boundary with an exact `:N` continuation ([#16277](https://github.com/can1357/oh-my-pi/issues/16277))
 - Fixed an edit after a restart replacing a line that `read` or `grep` had shown cut at the column cap and silently dropping the rest of that line; such edits now ask for a full `:raw` read of the line first, while edits to lines within the cap still apply ([#16171](https://github.com/can1357/oh-my-pi/issues/16171))
 - Fixed Enter on an unknown slash command such as `/not-a-command` running a command whose description happened to match it (e.g. `/loop`, which then resent every later prompt after each turn); Enter now sends what you typed, including as the deny-and-steer message for a pending tool approval, unless you select a suggestion first ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
