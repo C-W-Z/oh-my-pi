@@ -3,20 +3,19 @@ import type { SymbolKey } from "../theme/symbols";
 
 /** Shared category styles for maps and interactive legends; resolve glyphs at render time. */
 const SYSTEM = { color: "accent", symbol: "context.content" } as const;
-const INSTRUCTIONS = { color: "customMessageLabel", symbol: "context.content" } as const;
+const DETAILS = { color: "customMessageLabel", symbol: "context.content" } as const;
 const TOOLS = { color: "warning", symbol: "context.content" } as const;
 const SKILLS = { color: "success", symbol: "context.content" } as const;
 const MESSAGES = { color: "userMessageText", symbol: "context.messages" } as const;
 const OUTPUT = { color: "muted", symbol: "context.messages" } as const;
 export const CONTEXT_PRESENTATION = {
 	"system-prompt": SYSTEM,
-	"instruction-files": INSTRUCTIONS,
 	skills: SKILLS,
 	"built-in-tools": TOOLS,
-	"custom-tools": INSTRUCTIONS,
+	"custom-tools": DETAILS,
 	"user-messages": MESSAGES,
 	"assistant-messages": SYSTEM,
-	"assistant-thinking": INSTRUCTIONS,
+	"assistant-thinking": DETAILS,
 	"tool-calls": TOOLS,
 	"tool-output": OUTPUT,
 	buffer: { color: "warning", symbol: "context.buffer" },

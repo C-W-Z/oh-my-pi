@@ -9,7 +9,6 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import type { BuildSessionContextOptions, SessionContext } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { buildSessionContextView } from "@oh-my-pi/pi-coding-agent/session/context-view";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 /**
@@ -278,111 +277,6 @@ describe("AgentSession.switchSession previous-context build", () => {
 		expect(sessionManager.getCwd()).toBe(sourceDir.path());
 		expect(session.isDisposed).toBe(true);
 	});
-
-	it("commits the switched session's prompt and sources together after a delayed rebuild", async () => {
-		const tempDir = TempDir.createSync("@pi-switch-context-sources-success-");
-		tempDirs.push(tempDir);
-		const manager = SessionManager.create(tempDir.path(), tempDir.path());
-		const target = SessionManager.create(tempDir.path(), tempDir.path());
-		target.appendMessage({ role: "user", content: "target", timestamp: 1 });
-		await target.ensureOnDisk();
-		await target.flush();
-		const targetFile = target.getSessionFile()!;
-		await target.close();
-		const built = (fragment: string) => ({
-			systemPrompt: [fragment],
-			sources: {
-				blocks: [fragment],
-				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files" as const, label: "rules", fragment }],
-			},
-		});
-		const initial = built("previous rules");
-		const next = built("target rules");
-		const entered = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<void>();
-		const session = new AgentSession({
-			agent: new Agent({ initialState: { model, systemPrompt: initial.systemPrompt, tools: [] } }),
-			sessionManager: manager,
-			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry,
-			systemPromptSources: initial.sources,
-			rebuildSystemPrompt: async () => {
-				entered.resolve();
-				await release.promise;
-				return next;
-			},
-		});
-		sessions.push(session);
-		const switching = session.switchSession(targetFile);
-		try {
-			await entered.promise;
-			expect(session.systemPrompt).toEqual(initial.systemPrompt);
-			expect(session.systemPromptSources).toBe(initial.sources);
-			expect(
-				buildSessionContextView(session)
-					.categories.find(category => category.id === "instruction-files")
-					?.entries.map(entry => entry.text),
-			).toEqual(["previous rules"]);
-		} finally {
-			release.resolve();
-		}
-		expect(await switching).toBe(true);
-		expect(session.sessionFile).toBe(targetFile);
-		expect(session.systemPrompt).toEqual(next.systemPrompt);
-		expect(session.systemPromptSources).toBe(next.sources);
-		const data = buildSessionContextView(session);
-		expect(
-			data.categories.find(category => category.id === "instruction-files")?.entries.map(entry => entry.text),
-		).toEqual(["target rules"]);
-		expect(data.notices).toEqual([]);
-	});
-
-	it("restores prompt attribution when a switch hook rebuilds the target prompt and then fails", async () => {
-		const tempDir = TempDir.createSync("@pi-switch-context-sources-");
-		tempDirs.push(tempDir);
-		const manager = SessionManager.create(tempDir.path(), tempDir.path());
-		const target = SessionManager.create(tempDir.path(), tempDir.path());
-		target.appendMessage({ role: "user", content: "target", timestamp: 1 });
-		await target.ensureOnDisk();
-		await target.flush();
-		const targetFile = target.getSessionFile()!;
-		await target.close();
-		const built = (fragment: string) => ({
-			systemPrompt: [fragment],
-			sources: {
-				blocks: [fragment],
-				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files" as const, label: "rules", fragment }],
-			},
-		});
-		const initial = built("previous rules");
-		const next = built("target rules");
-		const session = new AgentSession({
-			agent: new Agent({ initialState: { model, systemPrompt: initial.systemPrompt, tools: [] } }),
-			sessionManager: manager,
-			settings: Settings.isolated({ "compaction.enabled": false }),
-			modelRegistry,
-			systemPromptSources: initial.sources,
-			rebuildSystemPrompt: async () => next,
-			extensionRunner: {
-				hasHandlers: () => false,
-				emit: async (event: { type: string }) => {
-					if (event.type === "session_switch") {
-						await session.refreshBaseSystemPrompt();
-						expect(session.systemPrompt).toEqual(next.systemPrompt);
-						expect(session.systemPromptSources).toBe(next.sources);
-						throw new Error("target hook failed");
-					}
-				},
-			} as unknown as ExtensionRunner,
-		});
-		sessions.push(session);
-		await expect(session.switchSession(targetFile)).rejects.toThrow("target hook failed");
-		expect(session.systemPrompt).toEqual(["previous rules"]);
-		expect(session.systemPromptSources).toBe(initial.sources);
-		const files = buildSessionContextView(session).categories.find(category => category.id === "instruction-files");
-		expect(files?.entries.map(entry => entry.text)).toEqual(["previous rules"]);
-	});
-
 	it("rejects reload when the session-before-switch hook cancels", async () => {
 		const tempDir = TempDir.createSync("@pi-switch-reload-cancel-");
 		tempDirs.push(tempDir);

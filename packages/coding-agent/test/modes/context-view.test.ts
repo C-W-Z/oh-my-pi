@@ -7,7 +7,9 @@ import { Settings } from "../../src/config/settings";
 import { AgentSession } from "../../src/session/agent-session";
 import { SessionManager } from "../../src/session/session-manager";
 import { buildSessionContextView } from "../../src/session/context-view";
-import { buildSystemPrompt, type SystemPromptSources } from "../../src/system-prompt";
+import { buildSystemPrompt } from "../../src/system-prompt";
+import type { Skill } from "../../src/extensibility/skills";
+import { computeSessionContextBreakdown } from "../../src/session/context-usage-runtime";
 import {
 	convertToLlm,
 	invalidateConvertToLlmArrayCache,
@@ -38,12 +40,11 @@ function tool(name: string): AgentTool {
 function sessionWith(
 	options: {
 		prompt?: string[];
-		sources?: SystemPromptSources;
+		skills?: Skill[];
 		messages?: AgentMessage[];
 		tools?: AgentTool[];
 		settings?: Settings;
 		model?: Model;
-		rebuild?: () => Promise<{ systemPrompt: string[]; sources?: SystemPromptSources }>;
 	} = {},
 ): AgentSession {
 	const tools = options.tools ?? [];
@@ -61,8 +62,7 @@ function sessionWith(
 		modelRegistry: { getApiKey: async () => "test-key" } as never,
 		toolRegistry: new Map(tools.map(tool => [tool.name, tool])),
 		builtInToolNames: ["read"],
-		systemPromptSources: options.sources,
-		rebuildSystemPrompt: options.rebuild,
+		skills: options.skills,
 	});
 	sessions.push(session);
 	return session;
@@ -125,287 +125,116 @@ describe("context snapshot", () => {
 		expect(data.free + data.buffer).toBe(data.window - 100);
 	});
 
-	it("previews actual static sources before the first message without reading skill or instruction files", async () => {
-		const built = await buildSystemPrompt({
-			cwd: import.meta.dir,
-			personality: "none",
-			activeRepoContext: null,
-			contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
-			skills: [
-				{
-					name: "fixture",
-					description: "Frozen skill hint",
-					filePath: "/nonexistent/SKILL.md",
-					baseDir: "/nonexistent",
-					source: "user",
-				},
-			],
-		});
-		const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources, tools: [tool("read")] });
-		const file = vi.spyOn(Bun, "file");
-		const data = buildSessionContextView(session);
-		expect(category(data, "instruction-files").entries.map(entry => entry.text)).toEqual([
-			expect.stringContaining("Unique instruction body"),
-		]);
-		expect(category(data, "skills").entries.map(entry => entry.text)).toEqual([
-			expect.stringContaining("Frozen skill hint"),
-		]);
-		expect(
-			category(data, "system-prompt")
-				.entries.map(entry => entry.text)
-				.join("\n"),
-		).not.toContain("Unique instruction body");
-		const systemEntry = category(data, "system-prompt").entries[0]!;
-		const skillEntry = category(data, "skills").entries[0]!;
-		expect(systemEntry.text).toContain("<skills>\n[Shown in Skills: fixture]\n</skills>");
-		expect(built.systemPrompt[0]).toContain(skillEntry.text);
-		expect(built.systemPrompt[0]).not.toContain("[Shown in");
-		expect(systemEntry.tokens).toBe(
-			session.agent.tokenizer.countTokens(built.systemPrompt[0]!.replace(skillEntry.text, "")),
-		);
-		expect(file).not.toHaveBeenCalled();
-		expect(data.categories.map(category => category.id)).toEqual([
-			"system-prompt",
-			"instruction-files",
-			"skills",
-			"built-in-tools",
-			"custom-tools",
-			"user-messages",
-			"assistant-messages",
-			"assistant-thinking",
-			"tool-calls",
-			"tool-output",
-		]);
-	});
-
-	it("attributes instruction files and XML skills delivered with a literal custom prompt without double-counting", async () => {
-		const built = await buildSystemPrompt({
-			cwd: import.meta.dir,
-			customPrompt: "Literal custom prompt.",
-			personality: "none",
-			activeRepoContext: null,
-			contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
-			skills: [
-				{
-					name: "fixture",
-					description: "Use <T> & {{literal}} without expansion",
-					filePath: "/nonexistent/SKILL.md",
-					baseDir: "/nonexistent",
-					source: "user",
-				},
-			],
-		});
-		const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources, tools: [tool("read")] });
-		const data = buildSessionContextView(session);
-		const instructionEntries = category(data, "instruction-files").entries;
-		const systemPromptText = category(data, "system-prompt")
-			.entries.map(entry => entry.text)
-			.join("\n");
-
-		expect(instructionEntries).toHaveLength(1);
-		expect(instructionEntries[0]?.text).toContain("Unique instruction body");
-		expect(systemPromptText).toContain("Literal custom prompt.");
-		expect(systemPromptText).not.toContain("Unique instruction body");
-		expect(data.notices).toEqual([]);
-		const skillEntries = category(data, "skills").entries;
-		expect(skillEntries.map(entry => entry.label)).toEqual(["fixture"]);
-		const fragment = skillEntries[0]!.text;
-		expect(fragment).toContain('<skill name="fixture">');
-		expect(fragment).toContain("Use <T> & {{literal}} without expansion");
-		expect(built.systemPrompt[0]).toContain(fragment);
-		expect(systemPromptText).not.toContain("Use <T>");
-		expect(systemPromptText).toContain("<skills>\n[Shown in Skills: fixture]\n</skills>");
-		expect(built.systemPrompt[0]).not.toContain("[Shown in");
-		expect(category(data, "system-prompt").entries[0]!.tokens).toBe(
-			session.agent.tokenizer.countTokens(built.systemPrompt[0]!.replace(fragment, "")),
-		);
-		expect(category(data, "skills").tokens).toBe(session.agent.tokenizer.countTokens(fragment));
-	});
-
-	it("keeps duplicate prompt blocks unattributed instead of pairing them by occurrence", () => {
-		const sources: SystemPromptSources = {
-			blocks: ["prefix FILE suffix", "prefix FILE suffix"],
-			sources: [{ id: "file", blockIndex: 1, kind: "instruction-files", label: "rules", fragment: "FILE" }],
-		};
-		const session = sessionWith({ prompt: [...sources.blocks], sources });
-		const data = buildSessionContextView(session);
-		expect(category(data, "instruction-files").entries).toEqual([]);
-		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual([...sources.blocks]);
-		expect(data.estimatedTokens).toBe(2 * session.agent.tokenizer.countTokens(sources.blocks[0]!));
-		expect(data.notices).toHaveLength(1);
-	});
-
-	it("keeps missing, changed, reordered and non-unique blocks or fragments entirely in System Prompt", () => {
-		const source = {
-			id: "file",
-			blockIndex: 0,
-			kind: "instruction-files" as const,
-			label: "rules",
-			fragment: "FILE",
-		};
-		const cases: { blocks: string[]; prompt: string[]; fragment?: string; blockIndex?: number }[] = [
-			{ blocks: ["prefix FILE suffix"], prompt: ["rewritten FILE"] },
-			{ blocks: ["prefix FILE suffix"], prompt: [] },
-			{ blocks: ["prefix FILE suffix", "other"], prompt: ["other", "prefix FILE suffix"] },
-			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix", "prefix FILE suffix"] },
-			{ blocks: ["FILE FILE"], prompt: ["FILE FILE"] },
-			{ blocks: ["AAA"], prompt: ["AAA"], fragment: "AA" },
-			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], fragment: "MISSING" },
-			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], fragment: "" },
-			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], blockIndex: -1 },
-		];
-		for (const fixture of cases) {
-			const sources: SystemPromptSources = {
-				blocks: fixture.blocks,
-				sources: [
-					{
-						...source,
-						fragment: fixture.fragment ?? source.fragment,
-						blockIndex: fixture.blockIndex ?? source.blockIndex,
-					},
-				],
-			};
-			const session = sessionWith({ prompt: fixture.prompt, sources });
-			const data = buildSessionContextView(session);
-			expect(category(data, "instruction-files").entries).toEqual([]);
-			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(fixture.prompt);
-			expect(data.estimatedTokens).toBe(
-				fixture.prompt.reduce((sum, block) => sum + session.agent.tokenizer.countTokens(block), 0),
-			);
-			expect(data.notices).toHaveLength(1);
-		}
-	});
-
-	it("rejects every overlapping source independent of category and metadata order", () => {
-		const cases: SystemPromptSources["sources"][] = [
-			[
-				{ id: "file", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "ABCD" },
-				{ id: "skill", blockIndex: 0, kind: "skills", label: "skill", fragment: "BCDE" },
-			],
-			[
-				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCD" },
-				{ id: "second", blockIndex: 0, kind: "instruction-files", label: "second", fragment: "BCDE" },
-			],
-			[
-				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCDE" },
-				{ id: "second", blockIndex: 0, kind: "skills", label: "second", fragment: "ABCDE" },
-			],
-			[
-				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "AB" },
-				{ id: "middle", blockIndex: 0, kind: "skills", label: "middle", fragment: "BCD" },
-				{ id: "last", blockIndex: 0, kind: "instruction-files", label: "last", fragment: "DE" },
-			],
-			[
-				{ id: "duplicate", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "AB" },
-				{ id: "duplicate", blockIndex: 0, kind: "skills", label: "last", fragment: "DE" },
-			],
-		];
-		for (const sources of cases) {
-			for (const ordered of [sources, [...sources].reverse()]) {
-				const session = sessionWith({ prompt: ["ABCDE"], sources: { blocks: ["ABCDE"], sources: ordered } });
-				const data = buildSessionContextView(session);
-				expect(category(data, "instruction-files").entries).toEqual([]);
-				expect(category(data, "skills").entries).toEqual([]);
-				expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["ABCDE"]);
-				expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("ABCDE"));
-				expect(data.notices).toHaveLength(1);
-			}
-		}
-	});
-
-	it("does not attribute a unique fragment that overlaps a repeated ambiguous fragment", () => {
-		for (const blockIndex of [0, -1]) {
-			const session = sessionWith({
-				prompt: ["FILE FILE"],
-				sources: {
-					blocks: ["FILE FILE"],
-					sources: [
-						{ id: "file", blockIndex, kind: "instruction-files", label: "rules", fragment: "FILE" },
-						{ id: "skill", blockIndex: 0, kind: "skills", label: "skill", fragment: "FILE FILE" },
-					],
-				},
-			});
-			const data = buildSessionContextView(session);
-			expect(category(data, "instruction-files").entries).toEqual([]);
-			expect(category(data, "skills").entries).toEqual([]);
-			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["FILE FILE"]);
-			expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("FILE FILE"));
-			expect(data.notices).toHaveLength(1);
-		}
-	});
-
-	it("retains disjoint sources while leaving all overlapping content and marker-free tokens in System Prompt", () => {
-		const session = sessionWith({
-			prompt: ["ABCDE SAFE"],
-			sources: {
-				blocks: ["ABCDE SAFE"],
-				sources: [
-					{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCD" },
-					{ id: "second", blockIndex: 0, kind: "skills", label: "second", fragment: "BCDE" },
-					{ id: "safe", blockIndex: 0, kind: "skills", label: "safe", fragment: "SAFE" },
-				],
+	it("retains full instruction and skill content in effective system blocks without reading their files", async () => {
+		const skills: Skill[] = [
+			{
+				name: "fixture",
+				description: "Use <T> & {{literal}} without expansion",
+				filePath: "/nonexistent/SKILL.md",
+				baseDir: "/nonexistent",
+				source: "user",
 			},
-		});
-		const data = buildSessionContextView(session);
-		expect(category(data, "instruction-files").entries).toEqual([]);
-		expect(category(data, "skills").entries.map(entry => entry.text)).toEqual(["SAFE"]);
-		const system = category(data, "system-prompt");
-		expect(system.entries[0]!.text).toBe("ABCDE [Shown in Skills: safe]");
-		expect(system.tokens).toBe(session.agent.tokenizer.countTokens("ABCDE "));
-		expect(data.estimatedTokens).toBe(
-			session.agent.tokenizer.countTokens("ABCDE ") + session.agent.tokenizer.countTokens("SAFE"),
-		);
-		expect(data.notices).toHaveLength(1);
-	});
-
-	it("retains missing and non-unique rendered skill metadata so incomplete attribution is visible", async () => {
-		for (const template of [
-			"Prompt without skill delivery",
-			"{{#each skills}}{{contextViewerFragment}}\n{{contextViewerFragment}}{{/each}}",
-		]) {
+		];
+		for (const customPrompt of [undefined, "Literal custom prompt."]) {
 			const built = await buildSystemPrompt({
 				cwd: import.meta.dir,
+				customPrompt,
 				personality: "none",
 				activeRepoContext: null,
-				systemPromptTemplate: template,
-				contextFiles: [],
-				skills: [
-					{
-						name: "fixture",
-						description: "Frozen skill hint",
-						filePath: "/nonexistent/SKILL.md",
-						baseDir: "/nonexistent",
-						source: "user",
-					},
-				],
+				contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
+				skills,
 			});
-			expect(built.sources?.sources).toHaveLength(1);
-			expect(built.sources?.sources[0]?.blockIndex).toBe(-1);
-			const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources });
+			const prompt = [...built.systemPrompt, "Additional effective policy"];
+			const session = sessionWith({ prompt, skills, tools: [tool("read")] });
+			const file = vi.spyOn(Bun, "file");
 			const data = buildSessionContextView(session);
-			expect(category(data, "skills").entries).toEqual([]);
-			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(built.systemPrompt);
-			expect(data.estimatedTokens).toBe(
-				built.systemPrompt.reduce((sum, block) => sum + session.agent.tokenizer.countTokens(block), 0),
+			const system = category(data, "system-prompt");
+			expect(system.entries.map(entry => entry.text)).toEqual(prompt);
+			expect(system.entries.map(entry => entry.tokens)).toEqual(
+				prompt.map(block => session.agent.tokenizer.countTokens(block)),
 			);
-			expect(data.notices).toHaveLength(1);
+			const text = system.entries.map(entry => entry.text).join("\n");
+			expect(text).toContain("Unique instruction body");
+			expect(text).toContain("Use <T> & {{literal}} without expansion");
+			if (customPrompt) expect(text).toContain(customPrompt);
+			const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
+			expect(shared.tokens).toBeGreaterThan(0);
+			expect(category(data, "skills")).toMatchObject({ entries: [], tokens: shared.tokens });
+			const fullPromptTokens = system.entries.reduce((sum, entry) => sum + entry.tokens, 0);
+			expect(system.tokens).toBe(fullPromptTokens - shared.tokens);
+			expect(system.tokens + category(data, "skills").tokens).toBe(fullPromptTokens);
+			expect(data.estimatedTokens).toBe(fullPromptTokens + category(data, "built-in-tools").tokens);
+			expect(file).not.toHaveBeenCalled();
+			file.mockRestore();
 		}
 	});
 
-	it("keeps a source-only block's location visible without charging tokens for the display marker", () => {
-		const sources: SystemPromptSources = {
-			blocks: ["FILE"],
-			sources: [{ id: "file", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "FILE" }],
+	it("uses the shared skill estimate with read-tool, hidden-skill and skillful gating", () => {
+		const visible: Skill = {
+			name: "visible",
+			description: "Visible skill description",
+			filePath: "/nonexistent/visible/SKILL.md",
+			baseDir: "/nonexistent/visible",
+			source: "user",
 		};
-		const session = sessionWith({ prompt: [...sources.blocks], sources });
+		const hidden: Skill = {
+			...visible,
+			name: "hidden",
+			description: "Hidden skill description",
+			hide: true,
+		};
+		for (const fixture of [
+			{ skills: [visible, hidden], tools: [tool("read")], skillful: true, visible: true },
+			{ skills: [visible, hidden], tools: [], skillful: true, visible: false },
+			{ skills: [hidden], tools: [tool("read")], skillful: true, visible: false },
+			{ skills: [visible, hidden], tools: [tool("read")], skillful: false, visible: false },
+		]) {
+			const session = sessionWith({
+				prompt: ["Effective policy including visible and hidden skill descriptions.\n".repeat(20)],
+				skills: fixture.skills,
+				tools: fixture.tools,
+				settings: Settings.isolated({
+					"compaction.enabled": false,
+					"todo.enabled": false,
+					skillful: fixture.skillful,
+				}),
+			});
+			const data = buildSessionContextView(session);
+			const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
+			const expected = fixture.visible
+				? session.agent.tokenizer.countTokens([visible.name, visible.description])
+				: 0;
+			expect(shared.tokens).toBe(expected);
+			expect(category(data, "skills")).toMatchObject({ tokens: expected, entries: [] });
+			const system = category(data, "system-prompt");
+			const promptTokens = session.agent.tokenizer.countTokens(session.systemPrompt[0]!);
+			expect(system.entries[0]!.text).toBe(session.systemPrompt[0]!);
+			expect(system.entries[0]!.tokens).toBe(promptTokens);
+			expect(system.tokens + expected).toBe(promptTokens);
+		}
+	});
+
+	it("clamps the System Prompt total when the shared Skills estimate exceeds the effective blocks", () => {
+		const session = sessionWith({
+			prompt: [""],
+			tools: [tool("read")],
+			skills: [
+				{
+					name: "fixture",
+					description: "A nonempty skill description",
+					filePath: "/nonexistent/SKILL.md",
+					baseDir: "/nonexistent",
+					source: "user",
+				},
+			],
+		});
 		const data = buildSessionContextView(session);
-		const systemEntries = category(data, "system-prompt").entries;
-		expect(systemEntries.map(entry => entry.label)).toEqual(["System Block 1"]);
-		expect(systemEntries[0]!.text).toContain("Instruction Files: rules");
-		expect(category(data, "system-prompt").tokens).toBe(0);
-		expect(category(data, "instruction-files").entries.map(entry => entry.text)).toEqual(["FILE"]);
-		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("FILE"));
-		expect(session.systemPrompt).toEqual(["FILE"]);
+		expect(category(data, "skills").tokens).toBeGreaterThan(0);
+		expect(category(data, "skills").entries).toEqual([]);
+		expect(category(data, "system-prompt")).toMatchObject({
+			tokens: 0,
+			entries: [{ id: "system-prompt/0", text: "", tokens: 0 }],
+		});
 	});
 
 	it("separates assistant blocks without charging reasoning usage repeatedly and never exposes signatures", () => {
@@ -815,99 +644,5 @@ describe("context snapshot", () => {
 		session.agent.setSystemPrompt(["different system"]);
 		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
 		expect(category(buildSessionContextView(session), "built-in-tools").entries).toEqual([]);
-	});
-
-	it("updates active-tool prompt sources only on successful rebuild and clears absent replacement metadata", async () => {
-		const initial: { systemPrompt: string[]; sources?: SystemPromptSources } = {
-			systemPrompt: ["original"],
-			sources: {
-				blocks: ["original"],
-				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "original" }],
-			},
-		};
-		const accepted: typeof initial = {
-			systemPrompt: ["accepted"],
-			sources: {
-				blocks: ["accepted"],
-				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "accepted" }],
-			},
-		};
-		let next = accepted;
-		let fail = false;
-		const session = sessionWith({
-			prompt: initial.systemPrompt,
-			sources: initial.sources,
-			tools: [tool("read")],
-			rebuild: async () => {
-				if (fail) throw new Error("tool rebuild rejected");
-				return next;
-			},
-		});
-		await session.setActiveToolsByName([]);
-		expect(session.systemPrompt).toEqual(accepted.systemPrompt);
-		expect(session.systemPromptSources).toBe(accepted.sources);
-		expect(category(buildSessionContextView(session), "instruction-files").entries.map(entry => entry.text)).toEqual([
-			"accepted",
-		]);
-		fail = true;
-		await expect(session.setActiveToolsByName(["read"])).rejects.toThrow("tool rebuild rejected");
-		expect(session.systemPrompt).toEqual(accepted.systemPrompt);
-		expect(session.systemPromptSources).toBe(accepted.sources);
-		fail = false;
-		next = { systemPrompt: ["replacement without source metadata"] };
-		await session.setActiveToolsByName(["read"]);
-		expect(session.systemPrompt).toEqual(next.systemPrompt);
-		expect(session.systemPromptSources).toBeUndefined();
-		const data = buildSessionContextView(session);
-		expect(category(data, "instruction-files").entries).toEqual([]);
-		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(next.systemPrompt);
-		expect(data.notices).toEqual([]);
-	});
-
-	it("publishes sources only with an accepted rebuild and leaves stale or throwing preparations untouched", async () => {
-		const make = (word: string) => ({
-			systemPrompt: [`prefix ${word} suffix`],
-			sources: {
-				blocks: [`prefix ${word} suffix`],
-				sources: [
-					{ id: "rules", blockIndex: 0, kind: "instruction-files" as const, label: "rules", fragment: word },
-				],
-			},
-		});
-		const initial = make("original");
-		let next = make("accepted");
-		let fail = false;
-		const gate = Promise.withResolvers<void>();
-		const entered = Promise.withResolvers<void>();
-		let hold = false;
-		const session = sessionWith({
-			prompt: initial.systemPrompt,
-			sources: initial.sources,
-			rebuild: async () => {
-				if (hold) {
-					entered.resolve();
-					await gate.promise;
-				}
-				if (fail) throw new Error("build rejected");
-				return next;
-			},
-		});
-		await session.refreshBaseSystemPrompt();
-		expect(category(buildSessionContextView(session), "instruction-files").entries[0]?.text).toBe("accepted");
-		next = make("stale");
-		hold = true;
-		let current = true;
-		const refresh = session.refreshBaseSystemPrompt(() => current);
-		await entered.promise;
-		expect(session.systemPrompt).toEqual(["prefix accepted suffix"]);
-		expect(session.systemPromptSources?.blocks).toEqual(session.systemPrompt);
-		current = false;
-		gate.resolve();
-		await refresh;
-		expect(category(buildSessionContextView(session), "instruction-files").entries[0]?.text).toBe("accepted");
-		hold = false;
-		fail = true;
-		await expect(session.refreshBaseSystemPrompt()).rejects.toThrow("build rejected");
-		expect(category(buildSessionContextView(session), "instruction-files").entries[0]?.text).toBe("accepted");
 	});
 });

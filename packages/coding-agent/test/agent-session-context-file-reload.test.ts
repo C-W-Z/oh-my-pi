@@ -9,7 +9,6 @@ import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { buildSessionContextView } from "@oh-my-pi/pi-coding-agent/session/context-view";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 function buildLocalModel(api: string): Model<Api> {
@@ -63,19 +62,11 @@ async function expectContextReload(reset: (session: AgentSession) => Promise<unk
 		expect(session.systemPrompt.join("\n")).toContain(original);
 
 		await fs.writeFile(agentsMd, updated);
-		const unchanged = buildSessionContextView(session).categories.find(
-			category => category.id === "instruction-files",
-		);
-		expect(unchanged?.entries.map(entry => entry.text).join("\n")).toContain(original);
-		expect(unchanged?.entries.map(entry => entry.text).join("\n")).not.toContain(updated);
 		expect(await reset(session)).toBeTruthy();
 
 		const rebuilt = session.systemPrompt.join("\n");
 		expect(rebuilt).toContain(updated);
 		expect(rebuilt).not.toContain(original);
-		const sources = buildSessionContextView(session).categories.find(category => category.id === "instruction-files");
-		expect(sources?.entries.map(entry => entry.text).join("\n")).toContain(updated);
-		expect(sources?.entries.map(entry => entry.text).join("\n")).not.toContain(original);
 	} finally {
 		await session.dispose();
 		authStorage.close();

@@ -10,7 +10,6 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionMaintenance } from "@oh-my-pi/pi-coding-agent/session/session-maintenance";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { buildSessionContextView } from "@oh-my-pi/pi-coding-agent/session/context-view";
 
 function createPrefixBindingModel(): Model<"anthropic-messages"> {
 	return buildModel({
@@ -123,16 +122,9 @@ function newSession(
 					emit: async () => undefined,
 				} as unknown as ExtensionRunner)
 			: undefined,
-		rebuildSystemPrompt: async toolNames => {
-			const fragment = await rebuilder.rebuildSystemPrompt(toolNames);
-			return {
-				systemPrompt: [fragment],
-				sources: {
-					blocks: [fragment],
-					sources: [{ id: "roster", blockIndex: 0, kind: "instruction-files", label: "roster", fragment }],
-				},
-			};
-		},
+		rebuildSystemPrompt: async toolNames => ({
+			systemPrompt: [await rebuilder.rebuildSystemPrompt(toolNames)],
+		}),
 	});
 	return { session, contexts, systemPrompts, promptCacheKeys, rebuild };
 }
@@ -167,10 +159,6 @@ describe("prefix-bound tool roster changes", () => {
 
 		expect(harness.rebuild).toHaveBeenCalledTimes(rebuildsBeforeRosterChange);
 		expect(harness.session.agent.state.systemPrompt).toEqual(promptBeforeRosterChange);
-		const files = buildSessionContextView(harness.session).categories.find(
-			category => category.id === "instruction-files",
-		);
-		expect(files?.entries.map(entry => entry.text)).toEqual(["tools:read"]);
 	});
 
 	// Subagent task prompts are direct user-role prompts attributed to the parent agent.
@@ -210,10 +198,6 @@ describe("prefix-bound tool roster changes", () => {
 
 		expect(harness.rebuild).toHaveBeenCalledTimes(rebuildsBeforeRosterChange + 1);
 		expect(harness.session.agent.state.systemPrompt).toEqual(["tools:read,bash"]);
-		const files = buildSessionContextView(harness.session).categories.find(
-			category => category.id === "instruction-files",
-		);
-		expect(files?.entries.map(entry => entry.text)).toEqual(["tools:read,bash"]);
 	});
 
 	describe("after a resume", () => {
