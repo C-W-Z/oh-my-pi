@@ -773,6 +773,7 @@ export class ContextViewer implements Component {
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
 			const body = children.splice(0);
 			if (meter) children.push(...meter);
+			else for (const line of this.#summary()) children.push(text([span(line, "dim")], { wrap: "word" }));
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
 			this.#revealPreview(Math.max(1, this.#width - 2), this.#height);

@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Native `/context` shows usage and compaction totals even without meter support or category token weights.
 - `/context` in Tern shows the model in its title and a prominent used-token total above the stacked usage bar, without snapshot boilerplate; terminals without native meters retain the context map ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - `/context` on non-Tern terminals shows the model in its overview title and a two-line usage and compaction summary only in the overview, without duplicate compaction details below the categories or summary text on content pages ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Tern context categories retain selectable list semantics with colored square markers matching the usage bar; the auto-compaction buffer is hatched and free space has an empty marker ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).

@@ -562,6 +562,24 @@ describe("ContextViewer presentation", () => {
 		}
 	});
 
+	it.each([
+		{ name: "without meter support", supportsMeter: false, emptyWeights: false },
+		{ name: "without category weights", supportsMeter: true, emptyWeights: true },
+	])("shows usage and compaction totals $name", ({ supportsMeter, emptyWeights }) => {
+		const data = fixture();
+		data.breakdown.thresholdTokens = 160000;
+		if (emptyWeights) for (const category of data.categories) category.tokens = 0;
+		const h = harness(data);
+		try {
+			const root = h.viewer.describe({ ...cx, supports: () => supportsMeter });
+			const lines = nodes(root).flatMap(node => (node.k === "text" ? [textValue(node.p?.spans)] : []));
+			expect(lines.some(line => /85K.*200K/.test(line ?? ""))).toBe(true);
+			expect(lines.some(line => /75K.*80%/.test(line ?? ""))).toBe(true);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("keeps buffer and free totals in the category list without disabled dimming or an extra footer rule", () => {
 		const h = harness();
 		try {
