@@ -339,7 +339,7 @@ export class ContextViewer implements Component {
 		const confirm = selected ? editorKey("tui.select.confirm") : "";
 		return (
 			theme.fg("dim", `  … +${hiddenLines} lines`) +
-			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} - View Content`) : "")
+			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} View Content`) : "")
 		);
 	}
 
