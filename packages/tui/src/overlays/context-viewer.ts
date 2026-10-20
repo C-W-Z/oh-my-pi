@@ -1,5 +1,5 @@
 import { countNewlines, formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
-import type { TspScrollBy, TspSpan } from "@oh-my-pi/pi-wire";
+import type { TspSpan } from "@oh-my-pi/pi-wire";
 import { planContextMap } from "../chrome/context-map";
 import {
 	CONTEXT_PRESENTATION,
@@ -10,15 +10,8 @@ import { editorKey } from "../chrome/keybinding-hints";
 import { OverlayPanel, PanelDivider, PanelRows } from "../chrome/overlay-box";
 import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
-import {
-	matchesSelectCancel,
-	matchesSelectDown,
-	matchesSelectPageDown,
-	matchesSelectPageUp,
-	matchesSelectUp,
-} from "../keybinding-matchers";
+import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
 import { getKeybindings } from "../keybindings";
-import { matchesKey } from "../keys";
 import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
@@ -131,8 +124,9 @@ export class ContextViewer implements Component {
 	#wrapped = new Map<string, { width: number; lines: string[] }>();
 	#safeEntries = new Map<string, string>();
 	#sourceLineCounts = new Map<string, number>();
+	// Native scroll requests, not a viewport offset. The reconciler repeats each
+	// line step by the increment in `n`.
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
-	#overviewBoundary: "first" | "last" | undefined;
 	#hour12: boolean | undefined;
 	#disposed = false;
 
@@ -431,9 +425,6 @@ export class ContextViewer implements Component {
 			},
 			listWidth,
 		);
-		if (this.#overviewBoundary === "last") this.#overviewScroll.scrollToBottom();
-		else if (this.#overviewBoundary === "first") this.#overviewScroll.scrollToTop();
-		this.#overviewBoundary = undefined;
 		const legend = this.#overviewScroll.render(listWidth);
 		if (!geometry) return [...legend];
 		const cells = this.#mapCells(geometry.columns, geometry.rows);
@@ -604,27 +595,25 @@ export class ContextViewer implements Component {
 		else this.#close();
 	}
 
-	#navigate(delta: number, by: TspScrollBy): void {
-		let distance = delta;
+	#navigate(delta: -1 | 1): void {
 		if (this.#state === "entry") this.#fullScroll.scroll(delta);
 		else if (this.#state === "overview") {
 			if (!this.#overview.move(delta)) this.#overviewScroll.scroll(delta);
 		} else {
+			// Use the ANSI preview range to scroll the selected entry's remaining content
+			// in the requested direction before changing selection in either renderer.
 			const range = this.#previewCache?.ranges[this.#entries.selectedIndex];
 			const visible = this.#previewScroll.getVisibleRange();
-			if (range && delta > 0 && range.end > visible.end) distance = Math.min(delta, range.end - visible.end);
-			else if (range && delta < 0 && range.start < visible.start)
-				distance = Math.max(delta, range.start - visible.start);
+			if (range && (delta > 0 ? range.end > visible.end : range.start < visible.start))
+				this.#previewScroll.scroll(delta);
 			else {
-				this.#entries.move(delta > 0 ? 1 : -1);
+				this.#entries.move(delta);
 				return;
 			}
-			this.#previewScroll.scroll(distance);
 		}
-		// Scroll only the remaining lines on a partial page so Native does not skip the selected entry.
 		this.#nativeScroll = {
-			by: distance === delta ? by : distance > 0 ? "line-down" : "line-up",
-			n: this.#nativeScroll.n + (distance === delta ? 1 : Math.abs(distance)),
+			by: delta > 0 ? "line-down" : "line-up",
+			n: this.#nativeScroll.n + 1,
 		};
 	}
 
@@ -634,44 +623,16 @@ export class ContextViewer implements Component {
 			matchesSelectCancel(data) ||
 			matchesSelectUp(data) ||
 			matchesSelectDown(data) ||
-			matchesSelectPageUp(data) ||
-			matchesSelectPageDown(data) ||
-			getKeybindings().matches(data, "tui.select.confirm") ||
-			matchesKey(data, "home") ||
-			matchesKey(data, "end")
+			getKeybindings().matches(data, "tui.select.confirm")
 		);
 	}
 
 	handleInput(data: string): void {
 		if (this.#disposed) return;
-		let by: TspScrollBy | undefined;
 		if (matchesSelectCancel(data)) this.#back();
 		else if (getKeybindings().matches(data, "tui.select.confirm")) this.#activate();
-		else if (matchesSelectUp(data)) {
-			this.#navigate(-1, "line-up");
-		} else if (matchesSelectDown(data)) {
-			this.#navigate(1, "line-down");
-		} else if (matchesSelectPageUp(data)) {
-			this.#navigate(-Math.max(1, this.#height - 1), "page-up");
-		} else if (matchesSelectPageDown(data)) {
-			this.#navigate(Math.max(1, this.#height - 1), "page-down");
-		} else if (matchesKey(data, "home") || matchesKey(data, "end")) {
-			const last = matchesKey(data, "end");
-			if (this.#state === "entry") {
-				const scroll = this.#fullScroll;
-				if (last) scroll.scrollToBottom();
-				else scroll.scrollToTop();
-			} else if (this.#state === "overview") {
-				this.#overviewBoundary = last ? "last" : "first";
-				this.#overview.moveToBoundary(this.#overviewBoundary);
-			} else {
-				this.#entries.moveToBoundary(last ? "last" : "first");
-				this.#requestRender();
-				return;
-			}
-			by = last ? "end" : "start";
-		}
-		if (by) this.#nativeScroll = { by, n: this.#nativeScroll.n + 1 };
+		else if (matchesSelectUp(data)) this.#navigate(-1);
+		else if (matchesSelectDown(data)) this.#navigate(1);
 		this.#requestRender();
 	}
 	describe(cx: DescribeContext): NativeNode {
@@ -756,7 +717,8 @@ export class ContextViewer implements Component {
 					lines.push({
 						...text(styledSpans(content || " "), { wrap: "word" }),
 						key: `line-${line}`,
-						// Restore the return position on mount; scroll requests move already-mounted rows.
+						// Share ANSI preview wrapping and offsets: reveal restores the viewport
+						// when returning from full content; scroll requests move mounted rows.
 						...(line === offset ? { reveal: "start" as const } : {}),
 					});
 				}

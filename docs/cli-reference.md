@@ -107,8 +107,9 @@ default) to select and scroll. To use `k`/`j`, bind them to these actions in
 primary bound key and omits unbound actions. Open content with
 `tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
 (Esc or Ctrl+C by default). Enter and Esc are not fixed aliases.
-Oversized entries scroll before selection advances; full content supports
-Home/End.
+Oversized entries scroll one line at a time before selection advances. The viewer
+does not handle `tui.select.pageUp` / `tui.select.pageDown` or fixed Home/End
+shortcuts; those physical keys work only if explicitly bound to a supported action.
 These bindings accept multiple keys or `[]` to disable the keyboard action.
 Browsing does not submit the composer draft or interrupt a background turn. The
 snapshot stays unchanged while open; close and reopen it to refresh.

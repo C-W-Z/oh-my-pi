@@ -145,6 +145,14 @@ function selected(root: NativeNode): string | null | undefined {
 	return list?.k === "list" ? list.p?.selected : nodes(root).find(node => node.p?.mark === "pick")?.key;
 }
 
+function scrollToText(viewer: ContextViewer, render: () => readonly string[], value: string): void {
+	for (let step = 0; step < 5000; step++) {
+		if (render().some(line => line.includes(value))) return;
+		viewer.handleInput("\x1b[B");
+	}
+	throw new Error(`Could not reach ${value} with down navigation`);
+}
+
 describe("ContextViewer navigation", () => {
 	const navigationBindings: {
 		name: string;
@@ -188,6 +196,41 @@ describe("ContextViewer navigation", () => {
 			}
 		});
 	}
+
+	it("ignores page and boundary shortcuts while preserving explicitly rebound up/down keys", () => {
+		const previousBindings = getKeybindings();
+		const h = harness();
+		try {
+			setKeybindings(
+				new KeybindingsManager(TUI_KEYBINDINGS, {
+					"tui.select.pageUp": "u",
+					"tui.select.pageDown": "d",
+				}),
+			);
+			h.resize(12);
+			for (const page of ["overview", "category", "entry"]) {
+				if (page === "category") select(h.viewer, "tool-output");
+				if (page === "entry") h.viewer.handleInput("\r");
+				const before = h.render(48);
+				const nativeBefore = h.viewer.describe({ ...cx, cols: 48 });
+				for (const key of ["\x1b[H", "\x1b[F", "\x1b[5~", "\x1b[6~", "u", "d"]) {
+					expect(h.viewer.capturesInput(key)).toBe(false);
+					h.viewer.handleInput(key);
+					expect(h.render(48)).toEqual(before);
+					expect(h.viewer.describe({ ...cx, cols: 48 })).toEqual(nativeBefore);
+				}
+			}
+			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "pageDown" }));
+			const before = h.render(48);
+			expect(h.viewer.capturesInput("\x1b[6~")).toBe(true);
+			h.viewer.handleInput("\x1b[6~");
+			expect(h.render(48)).not.toEqual(before);
+		} finally {
+			h.viewer.dispose();
+			setKeybindings(previousBindings);
+		}
+	});
+
 	it("keeps Skills token totals visible while native and keyboard navigation cannot focus or open them", () => {
 		const h = harness();
 		try {
@@ -313,7 +356,7 @@ describe("ContextViewer navigation", () => {
 		select(h.viewer, "tool-output");
 		const preview = h.render();
 		h.viewer.handleInput("\r");
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(), "context-output-tail");
 		expect(h.render().join("\n")).toContain("context-output-tail");
 		h.viewer.handleInput("\x1b");
 		expect(h.render()).toEqual(preview);
@@ -331,7 +374,7 @@ describe("ContextViewer navigation", () => {
 		h.render();
 		select(h.viewer, "tool-output/read");
 		h.render();
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(), "context-output-tail");
 		expect(h.render().join("\n")).toContain("context-output-tail");
 		h.viewer.handleInput("\x1b");
 		h.render();
@@ -341,7 +384,10 @@ describe("ContextViewer navigation", () => {
 		expect(nodes(h.viewer.describe(cx)).filter(node => node.k === "item")).toEqual([]);
 		h.viewer.handleInput("\x1b");
 		h.render();
-		h.viewer.handleInput("\x1b[F");
+		for (let step = 0; step < 20; step++) {
+			h.viewer.handleInput("\x1b[B");
+			h.render();
+		}
 		h.render();
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
 		h.viewer.handleInput("\x1b[B");
@@ -349,7 +395,7 @@ describe("ContextViewer navigation", () => {
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
 		h.resize(12);
 		h.render(48);
-		h.viewer.handleInput("\x1b[F");
+		h.viewer.handleInput("\x1b[B");
 		h.render(48);
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("tool-output/bash");
 	});
@@ -420,9 +466,7 @@ describe("ContextViewer navigation", () => {
 		expect(body.scroll).toBeDefined();
 		for (const [key, by] of [
 			["\x1b[B", "line-down"],
-			["\x1b[6~", "page-down"],
 			["\x1b[A", "line-up"],
-			["\x1b[5~", "page-up"],
 		] as const) {
 			h.viewer.handleInput(key);
 			const ops = reconcile();
@@ -434,7 +478,7 @@ describe("ContextViewer navigation", () => {
 		const before = h.render(48);
 		h.viewer.handleInput("\r");
 		reconcile();
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(48), "native-output-tail");
 		reconcile();
 		expect(h.render(48).join("\n")).toContain("native-output-tail");
 		h.viewer.handleInput("\x1b");
@@ -461,38 +505,6 @@ describe("ContextViewer navigation", () => {
 		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
 	});
 
-	it("clamps a Native page step to the selected entry tail before advancing selection", () => {
-		const data = fixture();
-		data.categories.find(category => category.id === "tool-output")!.entries = [
-			{
-				id: "result/0",
-				label: "first",
-				tokens: 1,
-				path: "/fixture/output.txt",
-				callId: "call-first",
-				timestamp: 0,
-				text: `${"body\n".repeat(5)}partial-page-tail`,
-			},
-			{ id: "result/1", label: "next", tokens: 1, text: "next body" },
-		];
-		const h = harness(data);
-		h.resize(12);
-		const nativeCx = { ...cx, cols: 48 };
-		const reconciler = new Reconciler("context-boundary");
-		const regions = { main: [h.viewer], dock: [], layer: [] };
-		reconciler.reconcile(regions, nativeCx);
-		select(h.viewer, "tool-output");
-		reconciler.reconcile(regions, nativeCx);
-		h.viewer.handleInput("\x1b[6~");
-		const scrolls = reconciler.reconcile(regions, nativeCx).filter(op => op[0] === "scroll");
-		expect(scrolls.map(op => op[2])).toEqual(["line-down", "line-down"]);
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
-		expect(h.render(48).join("\n")).toContain("partial-page-tail");
-		h.viewer.handleInput("\x1b[6~");
-		expect(reconciler.reconcile(regions, nativeCx).some(op => op[0] === "scroll")).toBe(false);
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
-	});
-
 	it("handles native select/activate/Back/Close and emits repeated terminal scroll requests", () => {
 		const h = harness();
 		h.viewer.describe(cx);
@@ -500,12 +512,12 @@ describe("ContextViewer navigation", () => {
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/read");
 		select(h.viewer, "tool-output/read");
 		h.viewer.describe(cx);
-		h.viewer.handleInput("\x1b[6~");
+		h.viewer.handleInput("\x1b[B");
 		const scroll = nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll;
-		expect(scroll).toMatchObject({ by: "page-down", n: 1 });
-		h.viewer.handleInput("\x1b[6~");
+		expect(scroll).toMatchObject({ by: "line-down", n: 1 });
+		h.viewer.handleInput("\x1b[B");
 		expect(nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll).toMatchObject({
-			by: "page-down",
+			by: "line-down",
 			n: 2,
 		});
 		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
@@ -532,7 +544,7 @@ describe("ContextViewer preview boundaries", () => {
 		expect(h.render(48).join("\n")).not.toContain("single-line-tail");
 		h.viewer.handleInput("\r");
 		h.render(48);
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(48), "single-line-tail");
 		expect(h.render(48).join("\n")).toContain("single-line-tail");
 		h.viewer.handleInput("\x1b");
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
@@ -804,7 +816,7 @@ describe("ContextViewer presentation", () => {
 		expect(h.viewer.capturesInput("d")).toBe(false);
 		h.viewer.handleInput("d");
 		expect(h.render(160)).toEqual(overview);
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(160), "2 frames");
 		const savings = h.render(160).join("\n");
 		expect(savings).toContain("6K");
 		expect(savings).toContain("79K");
@@ -968,7 +980,7 @@ describe("ContextViewer presentation", () => {
 				snapcompact: { visionCapable: false, savedTokens: 0 },
 			},
 		});
-		inactive.viewer.handleInput("\x1b[F");
+		scrollToText(inactive.viewer, () => inactive.render(160), "no image input");
 		expect(inactive.render(160).join("\n")).toContain("no image input");
 	});
 
@@ -1038,14 +1050,14 @@ describe("ContextViewer presentation", () => {
 		}
 		select(h.viewer, "tool-output/read");
 		h.render(48);
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(48), "context-output-tail");
 		expect(h.render(48).join("\n")).toContain("context-output-tail");
 		h.resize(18);
 		h.render(48);
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(48), "context-output-tail");
 		expect(h.render(48).join("\n")).toContain("context-output-tail");
 		h.render(100);
-		h.viewer.handleInput("\x1b[F");
+		scrollToText(h.viewer, () => h.render(100), "context-output-tail");
 		expect(h.render(100).join("\n")).toContain("context-output-tail");
 	});
 });
