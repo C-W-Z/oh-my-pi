@@ -11,7 +11,7 @@ import type {
 import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
-import { convertToLlm } from "./messages";
+import { convertMessagesForContextView } from "./messages";
 
 const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["system-prompt", "System Prompt"],
@@ -62,54 +62,87 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	};
 	const effective = session.systemPrompt;
 	const metadata = session.systemPromptSources;
-	const paired = new Map<number, number>();
-	const matched = new Set<number>();
 	let incomplete = false;
+	type Claim = {
+		start: number;
+		end: number;
+		placeholder: string;
+		category: ContextCategoryId;
+		source: NonNullable<typeof metadata>["sources"][number];
+		ambiguous: boolean;
+	};
+	const claimed = new Map<number, Claim[]>();
 	if (metadata) {
-		for (const [index, block] of metadata.blocks.entries()) {
-			const target = effective.findIndex((current, position) => current === block && !matched.has(position));
-			if (target >= 0) {
-				paired.set(index, target);
-				matched.add(target);
+		const blockCounts = (blocks: readonly string[]): Map<string, number> => {
+			const counts = new Map<string, number>();
+			for (const block of blocks) counts.set(block, (counts.get(block) ?? 0) + 1);
+			return counts;
+		};
+		const builtCounts = blockCounts(metadata.blocks);
+		const effectiveCounts = blockCounts(effective);
+		const idCounts = new Map<string, number>();
+		for (const source of metadata.sources) idCounts.set(source.id, (idCounts.get(source.id) ?? 0) + 1);
+		const candidates = new Map<number, Claim[]>();
+		for (const source of metadata.sources) {
+			if (!source.fragment) {
+				incomplete = true;
+				continue;
 			}
-		}
-	}
-	const claimed = new Map<
-		number,
-		{ start: number; end: number; placeholder: string; category: ContextCategoryId }[]
-	>();
-	const delivered = new Set<string>();
-	if (metadata) {
-		for (const kind of ["instruction-files", "skills"] as const) {
-			for (const source of metadata.sources.filter(source => source.kind === kind)) {
-				if (delivered.has(source.id)) continue;
-				const index = paired.get(source.blockIndex);
-				if (!source.fragment || index === undefined) {
-					incomplete = true;
-					continue;
-				}
-				const block = effective[index]!;
-				const start = block.indexOf(source.fragment);
-				const end = start + source.fragment.length;
-				const ranges = claimed.get(index) ?? [];
+			// An unpaired generated fragment still reserves all possible locations,
+			// so another source cannot claim overlapping ambiguous content.
+			const indices =
+				source.blockIndex < 0
+					? metadata.blocks.flatMap((block, index) => (block.includes(source.fragment) ? [index] : []))
+					: [source.blockIndex];
+			if (source.blockIndex < 0) incomplete = true;
+			for (const index of indices) {
+				const block = metadata.blocks[index];
+				// Do not remap reordered policy blocks, even when their text is unchanged.
 				if (
-					start < 0 ||
-					block.indexOf(source.fragment, start + 1) >= 0 ||
-					ranges.some(range => start < range.end && end > range.start)
+					block === undefined ||
+					effective[index] !== block ||
+					builtCounts.get(block) !== 1 ||
+					effectiveCounts.get(block) !== 1
 				) {
 					incomplete = true;
 					continue;
 				}
-				ranges.push({
-					start,
-					end,
-					placeholder: `[Shown in ${byId.get(kind)!.label}: ${source.label}]`,
-					category: kind,
-				});
-				claimed.set(index, ranges);
-				delivered.add(source.id);
-				add(kind, {
-					id: `${kind}/${source.id}`,
+				const first = block.indexOf(source.fragment);
+				if (first < 0) {
+					incomplete = true;
+					continue;
+				}
+				const ambiguous =
+					source.blockIndex < 0 || idCounts.get(source.id) !== 1 || block.indexOf(source.fragment, first + 1) >= 0;
+				if (ambiguous) incomplete = true;
+				const ranges = candidates.get(index) ?? [];
+				for (let start = first; start >= 0; start = block.indexOf(source.fragment, start + 1)) {
+					ranges.push({
+						start,
+						end: start + source.fragment.length,
+						placeholder: `[Shown in ${byId.get(source.kind)!.label}: ${source.label}]`,
+						category: source.kind,
+						source,
+						ambiguous,
+					});
+				}
+				candidates.set(index, ranges);
+			}
+		}
+		for (const [index, ranges] of candidates) {
+			// Validate the complete set before publishing: every participant in an
+			// overlap is ambiguous, regardless of category or metadata order.
+			const accepted = ranges.filter(range => {
+				const overlaps = ranges.some(
+					other => other !== range && range.start < other.end && range.end > other.start,
+				);
+				if (overlaps) incomplete = true;
+				return !range.ambiguous && !overlaps;
+			});
+			claimed.set(index, accepted);
+			for (const { source } of accepted) {
+				add(source.kind, {
+					id: `${source.kind}/${source.id}`,
 					label: source.label,
 					path: source.path,
 					text: source.fragment,
@@ -186,7 +219,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		add("tool-output", entry);
 	};
 	const sourceMessages = session.agent.state.messages;
-	convertToLlm(sourceMessages, (message, messageIndex, convertedIndex) => {
+	for (const { message, sourceIndex: messageIndex, convertedIndex } of convertMessagesForContextView(sourceMessages)) {
 		const original = sourceMessages[messageIndex]!;
 		const execution =
 			original.role === "bashExecution" ? "bash" : original.role === "pythonExecution" ? "python" : undefined;
@@ -294,7 +327,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				tokens: tokenizer.countMessages([message]),
 			});
 		}
-	});
+	}
 	const chronological = (a: ContextViewEntry, b: ContextViewEntry): number =>
 		(chronology.get(a.id) ?? 0) - (chronology.get(b.id) ?? 0);
 	output.entries.sort(chronological);

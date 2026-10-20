@@ -599,10 +599,12 @@ export interface BuildSystemPromptOptions {
 /** Read-only sources committed with the built blocks, without inferring structure from the effective prompt. */
 export interface SystemPromptSource {
 	readonly id: string;
+	/** Original built block index, or -1 when the rendered fragment has no unique location. */
 	readonly blockIndex: number;
 	readonly kind: "instruction-files" | "skills";
 	readonly label: string;
 	readonly path?: string;
+	/** Rendered prompt text, without viewer-only display markers. */
 	readonly fragment: string;
 }
 
@@ -615,7 +617,7 @@ export interface SystemPromptSources {
 export interface BuildSystemPromptResult {
 	/** Ordered system prompt blocks. Providers should preserve entries as distinct messages/blocks. */
 	systemPrompt: string[];
-	/** Sources rendered by this build, valid only for identical blocks. */
+	/** Sources rendered by this build, valid only for unique identical blocks at their original indices. */
 	sources?: SystemPromptSources;
 	/**
 	 * Names of `xd://` devices whose catalog/protocol section this prompt renders.
@@ -1074,6 +1076,17 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		!resolvedCustomPrompt && xdevTools.length > 0 && rendered.includes("xd://")
 			? xdevTools.map(mounted => mounted.name)
 			: undefined;
+	const sourceBlockIndex = (fragment: string): number => {
+		if (!fragment) return -1;
+		let found = -1;
+		for (const [index, block] of systemPrompt.entries()) {
+			const start = block.indexOf(fragment);
+			if (start < 0) continue;
+			if (found >= 0 || block.indexOf(fragment, start + 1) >= 0) return -1;
+			found = index;
+		}
+		return found;
+	};
 	const sources: SystemPromptSources = {
 		blocks: systemPrompt.slice(),
 		sources: [
@@ -1081,7 +1094,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 				const fragment = prompt.format(file.contextViewerFragment, { renderPhase: "post-render" }).trim();
 				return {
 					id: `instruction-${index}`,
-					blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
+					blockIndex: sourceBlockIndex(fragment),
 					kind: "instruction-files",
 					label: file.path,
 					path: file.path,
@@ -1092,14 +1105,14 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 				const fragment = prompt.format(skill.contextViewerFragment, { renderPhase: "post-render" }).trim();
 				return {
 					id: `skill-${index}`,
-					blockIndex: systemPrompt.findIndex(block => block.includes(fragment)),
+					blockIndex: sourceBlockIndex(fragment),
 					kind: "skills",
 					label: skill.name,
 					path: skill.filePath,
 					fragment,
 				};
 			}),
-		].filter(source => source.blockIndex >= 0),
+		],
 	};
 	return { systemPrompt, xdevCatalogNames, sources };
 }

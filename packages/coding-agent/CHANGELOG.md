@@ -4,10 +4,10 @@
 
 ### Added
 
-- Added a read-only interactive /context viewer for inspecting active prompts, instruction files, skills, tools, conversation messages, thinking blocks, and tool output, available even before the first message.
-- Added on-demand context snapshots using shared LLM message conversion, preserving source attribution across converted messages, distinguishing encoded and plaintext thinking, displaying canonical tool names, and including replayable payload-only reasoning in estimates.
-- Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID.
-- System Prompt entries in `/context` mark where instruction files and skills are displayed in their own categories without adding tokens to the estimates.
+- Added a read-only interactive /context viewer for inspecting active prompts, instruction files, skills, tools, conversation messages, thinking blocks, and tool output, available even before the first message ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Added on-demand context snapshots with source attribution across omitted and split messages, canonical tool names, and replay-aware thinking estimates without changing production conversion caches ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- System Prompt entries in `/context` mark attributed instruction files and skills without charging display-marker tokens; ambiguous, overlapping, moved, or changed sources remain in System Prompt with an incomplete-attribution notice ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 ### Fixed
 
 - Fixed `read` middle-eliding large file pages into an artifact; a page past the output spill threshold now stops at a line boundary with an exact `:N` continuation ([#16277](https://github.com/can1357/oh-my-pi/issues/16277))

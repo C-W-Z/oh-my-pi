@@ -4,19 +4,19 @@
 
 ### Added
 
-- Added an ANSI and native Context Viewer with category navigation, wrapped entry previews, scrollable full-content inspection, and in-entry scrolling.
-- Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings.
-- Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints.
-- Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata.
-- Context Viewer navigation, open, and back/close shortcuts and hints honor configured or unbound keys without fixed aliases; the full-content page does not advertise an inactive open action.
+- Added an ANSI and native Context Viewer with category navigation, wrapped entry previews, scrollable full-content inspection, and in-entry scrolling ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Context Viewer navigation, open, and back/close shortcuts and hints honor configured or unbound keys without fixed aliases; the full-content page does not advertise an inactive open action ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - `AutocompleteItem.descriptionMatch` marks a slash command matched only through its description; `Editor` Enter no longer applies such a row unless the user moved the selection onto it ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
 
 ### Fixed
 
-- `/context` in Tern shows the model in its title and a prominent used-token total above the stacked usage bar, without snapshot boilerplate; terminals without native meters retain the context map.
-- `/context` on non-Tern terminals shows the model in its overview title and a two-line usage and compaction summary only in the overview, without duplicate compaction details below the categories or summary text on content pages.
-- Tern context categories retain selectable list semantics with colored square markers matching the usage bar; the auto-compaction buffer is hatched and free space has an empty marker.
-- Tern `/context` keeps auto-compaction buffer and free-space totals in the category list at normal text contrast, ignores attempts to open them, and omits the extra divider above the footer buttons.
+- `/context` in Tern shows the model in its title and a prominent used-token total above the stacked usage bar, without snapshot boilerplate; terminals without native meters retain the context map ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- `/context` on non-Tern terminals shows the model in its overview title and a two-line usage and compaction summary only in the overview, without duplicate compaction details below the categories or summary text on content pages ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Tern context categories retain selectable list semantics with colored square markers matching the usage bar; the auto-compaction buffer is hatched and free space has an empty marker ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Tern `/context` keeps auto-compaction buffer and free-space totals in the category list at normal text contrast, ignores attempts to open them, and omits the extra divider above the footer buttons ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Fixed the composer caret drifting one cell left per pasted image or video chip in terminals that draw the chip icon as a wide emoji (JetBrains terminal); the `unicode` preset now uses `📷`/`🎬` chip icons ([#16270](https://github.com/can1357/oh-my-pi/issues/16270))
 - Fixed Tern hiding user text sent with `/skill:<name>` inside a collapsed skill card; only the loaded skill prompt is hidden ([#16311](https://github.com/can1357/oh-my-pi/issues/16311))
 

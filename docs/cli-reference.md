@@ -67,11 +67,12 @@ Argument handling:
 ### Interactive context viewer
 
 `/context` opens a read-only snapshot of the active context: the current system
-prompt, loaded instruction and skill fragments, active tools, and live messages
-projected through the shared base `convertToLlm` rules. Categories retain source
-attribution when conversion omits a message or splits it into multiple outputs.
-Interrupted-thinking continuity and tool-name canonicalization follow those same
-conversion rules.
+prompt, loaded instruction and skill fragments, active tools, and live messages.
+The viewer's independent conversion entry point shares the base `convertToLlm`
+conversion core without reading or populating production conversion caches.
+Source and converted-message indices preserve attribution across omitted inputs
+and one-to-many outputs. Interrupted-thinking continuity, refusal handling, and
+tool-name canonicalization follow the same conversion rules.
 
 This is not the raw transcript, the last request, or an exact preview of the next
 provider payload. Opening the viewer does not run extension `context` or
@@ -85,8 +86,13 @@ with `[Shown in <category>: <source>]` markers at their original positions,
 colored with the corresponding category's theme color.
 The fragments remain in the provider-facing system prompt and are displayed in
 their own categories, including when a literal custom prompt is active. Markers
-are viewer-only and do not contribute to token estimates. Unmatched or ambiguous
-fragments stay in System Prompt rather than being assigned a guessed source.
+are viewer-only and do not contribute to token estimates. A source is attributed
+only when its prompt block is unchanged at its original index, unique in both
+the built and effective prompts, and contains one non-overlapping occurrence of
+its fragment. Missing, repeated, overlapping, moved, or changed sources remain
+in System Prompt with an incomplete-attribution notice rather than a guessed
+source. Prompt rebuilds and session switches commit source metadata with the
+corresponding prompt; failed switches restore both.
 
 Assistant Thinking includes reasoning retained only in replayable provider
 payloads, displayed as an encoded-thinking placeholder without exposing payloads

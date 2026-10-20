@@ -222,29 +222,174 @@ describe("context snapshot", () => {
 		expect(category(data, "skills").tokens).toBe(session.agent.tokenizer.countTokens(fragment));
 	});
 
-	it("keeps rewritten or ambiguous prompt fragments in System Prompt, pairing repeated blocks by occurrence", () => {
+	it("keeps duplicate prompt blocks unattributed instead of pairing them by occurrence", () => {
 		const sources: SystemPromptSources = {
 			blocks: ["prefix FILE suffix", "prefix FILE suffix"],
 			sources: [{ id: "file", blockIndex: 1, kind: "instruction-files", label: "rules", fragment: "FILE" }],
 		};
 		const session = sessionWith({ prompt: [...sources.blocks], sources });
-		let data = buildSessionContextView(session);
-		expect(category(data, "instruction-files").entries.map(entry => entry.text)).toEqual(["FILE"]);
-		const systemEntries = category(data, "system-prompt").entries;
-		expect(systemEntries[0]?.text).toBe("prefix FILE suffix");
-		expect(systemEntries[1]?.text).toContain("Instruction Files: rules");
-		expect(systemEntries[1]?.text).not.toContain("FILE");
-		expect(systemEntries[1]?.tokens).toBe(session.agent.tokenizer.countTokens("prefix  suffix"));
-		session.agent.setSystemPrompt(["rewritten FILE"]);
-		data = buildSessionContextView(session);
+		const data = buildSessionContextView(session);
 		expect(category(data, "instruction-files").entries).toEqual([]);
-		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["rewritten FILE"]);
+		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual([...sources.blocks]);
+		expect(data.estimatedTokens).toBe(2 * session.agent.tokenizer.countTokens(sources.blocks[0]!));
 		expect(data.notices).toHaveLength(1);
-		const ambiguous = sessionWith({
-			prompt: ["FILE FILE"],
-			sources: { blocks: ["FILE FILE"], sources: [{ ...sources.sources[0]!, blockIndex: 0 }] },
+	});
+
+	it("keeps missing, changed, reordered and non-unique blocks or fragments entirely in System Prompt", () => {
+		const source = {
+			id: "file",
+			blockIndex: 0,
+			kind: "instruction-files" as const,
+			label: "rules",
+			fragment: "FILE",
+		};
+		const cases: { blocks: string[]; prompt: string[]; fragment?: string; blockIndex?: number }[] = [
+			{ blocks: ["prefix FILE suffix"], prompt: ["rewritten FILE"] },
+			{ blocks: ["prefix FILE suffix"], prompt: [] },
+			{ blocks: ["prefix FILE suffix", "other"], prompt: ["other", "prefix FILE suffix"] },
+			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix", "prefix FILE suffix"] },
+			{ blocks: ["FILE FILE"], prompt: ["FILE FILE"] },
+			{ blocks: ["AAA"], prompt: ["AAA"], fragment: "AA" },
+			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], fragment: "MISSING" },
+			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], fragment: "" },
+			{ blocks: ["prefix FILE suffix"], prompt: ["prefix FILE suffix"], blockIndex: -1 },
+		];
+		for (const fixture of cases) {
+			const sources: SystemPromptSources = {
+				blocks: fixture.blocks,
+				sources: [
+					{
+						...source,
+						fragment: fixture.fragment ?? source.fragment,
+						blockIndex: fixture.blockIndex ?? source.blockIndex,
+					},
+				],
+			};
+			const session = sessionWith({ prompt: fixture.prompt, sources });
+			const data = buildSessionContextView(session);
+			expect(category(data, "instruction-files").entries).toEqual([]);
+			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(fixture.prompt);
+			expect(data.estimatedTokens).toBe(
+				fixture.prompt.reduce((sum, block) => sum + session.agent.tokenizer.countTokens(block), 0),
+			);
+			expect(data.notices).toHaveLength(1);
+		}
+	});
+
+	it("rejects every overlapping source independent of category and metadata order", () => {
+		const cases: SystemPromptSources["sources"][] = [
+			[
+				{ id: "file", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "ABCD" },
+				{ id: "skill", blockIndex: 0, kind: "skills", label: "skill", fragment: "BCDE" },
+			],
+			[
+				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCD" },
+				{ id: "second", blockIndex: 0, kind: "instruction-files", label: "second", fragment: "BCDE" },
+			],
+			[
+				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCDE" },
+				{ id: "second", blockIndex: 0, kind: "skills", label: "second", fragment: "ABCDE" },
+			],
+			[
+				{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "AB" },
+				{ id: "middle", blockIndex: 0, kind: "skills", label: "middle", fragment: "BCD" },
+				{ id: "last", blockIndex: 0, kind: "instruction-files", label: "last", fragment: "DE" },
+			],
+			[
+				{ id: "duplicate", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "AB" },
+				{ id: "duplicate", blockIndex: 0, kind: "skills", label: "last", fragment: "DE" },
+			],
+		];
+		for (const sources of cases) {
+			for (const ordered of [sources, [...sources].reverse()]) {
+				const session = sessionWith({ prompt: ["ABCDE"], sources: { blocks: ["ABCDE"], sources: ordered } });
+				const data = buildSessionContextView(session);
+				expect(category(data, "instruction-files").entries).toEqual([]);
+				expect(category(data, "skills").entries).toEqual([]);
+				expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["ABCDE"]);
+				expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("ABCDE"));
+				expect(data.notices).toHaveLength(1);
+			}
+		}
+	});
+
+	it("does not attribute a unique fragment that overlaps a repeated ambiguous fragment", () => {
+		for (const blockIndex of [0, -1]) {
+			const session = sessionWith({
+				prompt: ["FILE FILE"],
+				sources: {
+					blocks: ["FILE FILE"],
+					sources: [
+						{ id: "file", blockIndex, kind: "instruction-files", label: "rules", fragment: "FILE" },
+						{ id: "skill", blockIndex: 0, kind: "skills", label: "skill", fragment: "FILE FILE" },
+					],
+				},
+			});
+			const data = buildSessionContextView(session);
+			expect(category(data, "instruction-files").entries).toEqual([]);
+			expect(category(data, "skills").entries).toEqual([]);
+			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(["FILE FILE"]);
+			expect(data.estimatedTokens).toBe(session.agent.tokenizer.countTokens("FILE FILE"));
+			expect(data.notices).toHaveLength(1);
+		}
+	});
+
+	it("retains disjoint sources while leaving all overlapping content and marker-free tokens in System Prompt", () => {
+		const session = sessionWith({
+			prompt: ["ABCDE SAFE"],
+			sources: {
+				blocks: ["ABCDE SAFE"],
+				sources: [
+					{ id: "first", blockIndex: 0, kind: "instruction-files", label: "first", fragment: "ABCD" },
+					{ id: "second", blockIndex: 0, kind: "skills", label: "second", fragment: "BCDE" },
+					{ id: "safe", blockIndex: 0, kind: "skills", label: "safe", fragment: "SAFE" },
+				],
+			},
 		});
-		expect(category(buildSessionContextView(ambiguous), "instruction-files").entries).toEqual([]);
+		const data = buildSessionContextView(session);
+		expect(category(data, "instruction-files").entries).toEqual([]);
+		expect(category(data, "skills").entries.map(entry => entry.text)).toEqual(["SAFE"]);
+		const system = category(data, "system-prompt");
+		expect(system.entries[0]!.text).toBe("ABCDE [Shown in Skills: safe]");
+		expect(system.tokens).toBe(session.agent.tokenizer.countTokens("ABCDE "));
+		expect(data.estimatedTokens).toBe(
+			session.agent.tokenizer.countTokens("ABCDE ") + session.agent.tokenizer.countTokens("SAFE"),
+		);
+		expect(data.notices).toHaveLength(1);
+	});
+
+	it("retains missing and non-unique rendered skill metadata so incomplete attribution is visible", async () => {
+		for (const template of [
+			"Prompt without skill delivery",
+			"{{#each skills}}{{contextViewerFragment}}\n{{contextViewerFragment}}{{/each}}",
+		]) {
+			const built = await buildSystemPrompt({
+				cwd: import.meta.dir,
+				personality: "none",
+				activeRepoContext: null,
+				systemPromptTemplate: template,
+				contextFiles: [],
+				skills: [
+					{
+						name: "fixture",
+						description: "Frozen skill hint",
+						filePath: "/nonexistent/SKILL.md",
+						baseDir: "/nonexistent",
+						source: "user",
+					},
+				],
+			});
+			expect(built.sources?.sources).toHaveLength(1);
+			expect(built.sources?.sources[0]?.blockIndex).toBe(-1);
+			const session = sessionWith({ prompt: built.systemPrompt, sources: built.sources });
+			const data = buildSessionContextView(session);
+			expect(category(data, "skills").entries).toEqual([]);
+			expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(built.systemPrompt);
+			expect(data.estimatedTokens).toBe(
+				built.systemPrompt.reduce((sum, block) => sum + session.agent.tokenizer.countTokens(block), 0),
+			);
+			expect(data.notices).toHaveLength(1);
+		}
 	});
 
 	it("keeps a source-only block's location visible without charging tokens for the display marker", () => {
@@ -576,6 +721,53 @@ describe("context snapshot", () => {
 		expect(category(buildSessionContextView(session), "built-in-tools").entries).toEqual([]);
 	});
 
+	it("updates active-tool prompt sources only on successful rebuild and clears absent replacement metadata", async () => {
+		const initial: { systemPrompt: string[]; sources?: SystemPromptSources } = {
+			systemPrompt: ["original"],
+			sources: {
+				blocks: ["original"],
+				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "original" }],
+			},
+		};
+		const accepted: typeof initial = {
+			systemPrompt: ["accepted"],
+			sources: {
+				blocks: ["accepted"],
+				sources: [{ id: "rules", blockIndex: 0, kind: "instruction-files", label: "rules", fragment: "accepted" }],
+			},
+		};
+		let next = accepted;
+		let fail = false;
+		const session = sessionWith({
+			prompt: initial.systemPrompt,
+			sources: initial.sources,
+			tools: [tool("read")],
+			rebuild: async () => {
+				if (fail) throw new Error("tool rebuild rejected");
+				return next;
+			},
+		});
+		await session.setActiveToolsByName([]);
+		expect(session.systemPrompt).toEqual(accepted.systemPrompt);
+		expect(session.systemPromptSources).toBe(accepted.sources);
+		expect(category(buildSessionContextView(session), "instruction-files").entries.map(entry => entry.text)).toEqual([
+			"accepted",
+		]);
+		fail = true;
+		await expect(session.setActiveToolsByName(["read"])).rejects.toThrow("tool rebuild rejected");
+		expect(session.systemPrompt).toEqual(accepted.systemPrompt);
+		expect(session.systemPromptSources).toBe(accepted.sources);
+		fail = false;
+		next = { systemPrompt: ["replacement without source metadata"] };
+		await session.setActiveToolsByName(["read"]);
+		expect(session.systemPrompt).toEqual(next.systemPrompt);
+		expect(session.systemPromptSources).toBeUndefined();
+		const data = buildSessionContextView(session);
+		expect(category(data, "instruction-files").entries).toEqual([]);
+		expect(category(data, "system-prompt").entries.map(entry => entry.text)).toEqual(next.systemPrompt);
+		expect(data.notices).toEqual([]);
+	});
+
 	it("publishes sources only with an accepted rebuild and leaves stale or throwing preparations untouched", async () => {
 		const make = (word: string) => ({
 			systemPrompt: [`prefix ${word} suffix`],
@@ -611,6 +803,8 @@ describe("context snapshot", () => {
 		let current = true;
 		const refresh = session.refreshBaseSystemPrompt(() => current);
 		await entered.promise;
+		expect(session.systemPrompt).toEqual(["prefix accepted suffix"]);
+		expect(session.systemPromptSources?.blocks).toEqual(session.systemPrompt);
 		current = false;
 		gate.resolve();
 		await refresh;

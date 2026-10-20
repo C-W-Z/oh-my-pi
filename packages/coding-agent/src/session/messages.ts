@@ -712,7 +712,6 @@ function wrapSteeringUserMessage(message: SteeringUserMessage): UserMessage {
 					attribution: "user",
 					timestamp: message.timestamp,
 				};
-	copyPerCallContextMessage(userMessage, message);
 	if (typeof message.content === "string") {
 		if (message.content.length === 0) return message.role === "user" ? message : userMessage;
 		return { ...userMessage, content: renderSteeringEnvelope(message.content) };
@@ -744,6 +743,7 @@ export function wrapSteeringForModel(messages: AgentMessage[]): AgentMessage[] {
 		let wrappedMessage = steeringWrapperCache.get(message);
 		if (wrappedMessage === undefined) {
 			wrappedMessage = wrapSteeringUserMessage(message);
+			copyPerCallContextMessage(wrappedMessage, message);
 			steeringWrapperCache.set(message, wrappedMessage);
 		}
 		if (wrappedMessage === message) continue;
@@ -1188,6 +1188,29 @@ function convertOne(m: AgentMessage, interruptedNext: boolean): Message[] {
 	}
 }
 
+/** A converted viewer message and its position in the source and converted histories. */
+export interface ContextViewMessage {
+	message: Message;
+	sourceIndex: number;
+	convertedIndex: number;
+}
+
+/**
+ * Convert history for inspection without reading or populating production caches
+ * or copying per-call provenance onto converted messages.
+ */
+export function convertMessagesForContextView(messages: AgentMessage[]): ContextViewMessage[] {
+	const result: ContextViewMessage[] = [];
+	for (let sourceIndex = 0; sourceIndex < messages.length; sourceIndex++) {
+		const source = messages[sourceIndex];
+		const interruptedNext = source.role === "assistant" && followedByInterruptedThinking(messages, sourceIndex);
+		for (const message of convertOne(source, interruptedNext)) {
+			result.push({ message, sourceIndex, convertedIndex: result.length });
+		}
+	}
+	return result;
+}
+
 /** Cached per-message conversion. Reuses the stored fragment while identity and
  *  `interruptedNext` neighbor state hold; recomputes on a neighbor flip. */
 function convertOneCached(m: AgentMessage, interruptedNext: boolean): Message[] {
@@ -1217,16 +1240,8 @@ export function isUserAuthoredMessage(message: AgentMessage): boolean {
  * unchanged re-convert of the same array hands back the same outer `Message[]`.
  * Owner mutations (prune/shake/strip-images) invalidate the affected message
  * through the shared registry before the next pass.
- *
- * An optional read-only visitor observes every converted message with its source
- * index and whole-sequence output index, including omissions and splits. It
- * walks cached fragments even on an exact repeat; no provenance is attached to
- * shared messages, and calls without a visitor retain the hot-path shortcuts.
  */
-export function convertToLlm(
-	messages: AgentMessage[],
-	visit?: (message: Message, sourceIndex: number, convertedIndex: number) => void,
-): Message[] {
+export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const len = messages.length;
 	const memo = convertArrayCache.get(messages);
 	const sameGeneration = memo !== undefined && memo.generation === convertGeneration;
@@ -1236,8 +1251,7 @@ export function convertToLlm(
 	// outer array. The tail-identity check rejects the streaming snapshot swap
 	// (partial → settled trailing keeps array identity/length but mints a fresh
 	// tail), so a settled tail never reads a stale mid-stream fragment.
-	const reuseOutput = sameGeneration && memo.length === len && tail === memo.tail;
-	if (reuseOutput && !visit) {
+	if (sameGeneration && memo.length === len && tail === memo.tail) {
 		return memo.output;
 	}
 
@@ -1250,11 +1264,7 @@ export function convertToLlm(
 	// array while swapping earlier identities, forcing a full rebuild.
 	let out: Message[];
 	let start: number;
-	if (reuseOutput) {
-		out = memo.output;
-		start = 0;
-	} else if (
-		!visit &&
+	if (
 		sameGeneration &&
 		len > memo.length &&
 		memo.length > 0 &&
@@ -1271,19 +1281,16 @@ export function convertToLlm(
 	// Output length contributed by messages[0 .. len-1), captured when the loop
 	// reaches the final index so the next growth can reuse this prefix.
 	let prefixOutputLen = 0;
-	let convertedIndex = 0;
 	for (let i = start; i < len; i++) {
 		if (i === len - 1) prefixOutputLen = out.length;
 		const m = messages[i];
 		const interruptedNext = m.role === "assistant" && followedByInterruptedThinking(messages, i);
 		const fragment = convertOneCached(m, interruptedNext);
 		for (const msg of fragment) {
-			if (!reuseOutput) out.push(msg);
-			visit?.(msg, i, convertedIndex++);
+			out.push(msg);
 		}
 	}
 	if (len === 0) prefixOutputLen = 0;
-	if (reuseOutput) return out;
 
 	// Record for the next call's shortcuts. `out` is a fresh array (slice or new),
 	// so a prior caller holding the previous memo output never sees it grow.
