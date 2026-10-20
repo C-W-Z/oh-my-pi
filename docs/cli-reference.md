@@ -124,6 +124,9 @@ and activation remain available when the corresponding keyboard actions are
 unbound. Empty inspectable categories remain accessible; categories with one entry
 open full content directly. Skills remains estimate-only.
 
+Truncated entry previews show `… more` instead of an omitted-line count; use the
+confirm action to inspect the full entry.
+
 ### Launch flags
 
 #### Session and workspace

@@ -9,6 +9,7 @@
 - Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Context Viewer uses configured up/down shortcuts for single-line navigation and scrolling, with no separate page or boundary shortcuts; open and back/close shortcuts and hints honor configured or unbound keys without fixed aliases ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Context Viewer previews mark omitted content with `… more` instead of counting hidden lines.
 - Context Viewer keeps Skills as a non-interactive token estimate; full skill and instruction text is inspectable in System Prompt.
 - `AutocompleteItem.descriptionMatch` marks a slash command matched only through its description; `Editor` Enter no longer applies such a row unless the user moved the selection onto it ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
 

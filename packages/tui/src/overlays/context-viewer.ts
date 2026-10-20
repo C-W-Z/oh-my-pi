@@ -1,4 +1,4 @@
-import { countNewlines, formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
+import { formatNumber, sanitizeText } from "@oh-my-pi/pi-utils";
 import type { TspSpan } from "@oh-my-pi/pi-wire";
 import { planContextMap } from "../chrome/context-map";
 import {
@@ -71,7 +71,6 @@ interface EntryRange {
 	start: number;
 	end: number;
 	complete: boolean;
-	hiddenLines: number;
 }
 
 function allocateTokens(weights: readonly number[], total: number): number[] | undefined {
@@ -121,7 +120,6 @@ export class ContextViewer implements Component {
 	#fullCache: { entry: ContextViewEntry; width: number } | undefined;
 	#wrapped = new Map<string, { width: number; lines: string[] }>();
 	#safeEntries = new Map<string, string>();
-	#sourceLineCounts = new Map<string, number>();
 	// Native scroll requests, not a viewport offset. The reconciler repeats each
 	// line step by the increment in `n`.
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
@@ -216,7 +214,6 @@ export class ContextViewer implements Component {
 		this.#fullCache = undefined;
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
-		this.#sourceLineCounts.clear();
 		this.#panel.invalidate();
 	}
 
@@ -224,7 +221,6 @@ export class ContextViewer implements Component {
 		this.#disposed = true;
 		this.#wrapped.clear();
 		this.#safeEntries.clear();
-		this.#sourceLineCounts.clear();
 		this.#overviewScroll.dispose();
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
@@ -258,31 +254,26 @@ export class ContextViewer implements Component {
 		return lines;
 	}
 
-	/** Wrap only a bounded preview prefix; count omitted source lines without expanding the tail. */
-	#entryPreview(
-		entry: ContextViewEntry,
-		width: number,
-		budget: number,
-	): { lines: string[]; complete: boolean; hiddenLines: number } {
+	/** Wrap only a bounded preview prefix. */
+	#entryPreview(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
 		const prefixLength = Math.min(entry.text.length, Math.max(1, width) * budget * 2);
 		const paragraphs = this.#safeContent(entry.text.slice(0, prefixLength)).split("\n");
 		const lines: string[] = [];
-		let shownSourceLines = 0;
+		let complete = prefixLength === entry.text.length;
 		for (const [index, paragraph] of paragraphs.entries()) {
 			const wrapped = paragraph ? wrapTextWithAnsi(paragraph, Math.max(1, width)) : [""];
 			const remaining = budget - lines.length;
 			lines.push(...wrapped.slice(0, remaining));
-			if (wrapped.length > remaining) break;
-			if (index < paragraphs.length - 1 || prefixLength === entry.text.length) shownSourceLines++;
-			if (lines.length === budget) break;
+			if (wrapped.length > remaining) {
+				complete = false;
+				break;
+			}
+			if (lines.length === budget) {
+				if (index < paragraphs.length - 1) complete = false;
+				break;
+			}
 		}
-		let total = this.#sourceLineCounts.get(entry.id);
-		if (total === undefined) {
-			total = countNewlines(entry.text.replace(/\r\n?/g, "\n")) + 1;
-			this.#sourceLineCounts.set(entry.id, total);
-		}
-		const hiddenLines = Math.max(0, total - shownSourceLines);
-		return { lines, complete: hiddenLines === 0, hiddenLines };
+		return { lines, complete };
 	}
 
 	#entryLabel(entry: ContextViewEntry): string {
@@ -327,10 +318,10 @@ export class ContextViewer implements Component {
 		);
 	}
 
-	#truncationMarker(hiddenLines: number, selected: boolean): string {
+	#truncationMarker(selected: boolean): string {
 		const confirm = selected ? editorKey("tui.select.confirm") : "";
 		return (
-			theme.fg("dim", `  … +${hiddenLines} lines`) +
+			theme.fg("dim", "  … more") +
 			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} View Content`) : "")
 		);
 	}
@@ -461,8 +452,8 @@ export class ContextViewer implements Component {
 			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
 			const content = this.#entryPreview(entry, Math.max(1, width - 3), budget);
 			lines.push(...content.lines.map(line => `  ${line}`));
-			if (!content.complete) lines.push(this.#truncationMarker(content.hiddenLines, false));
-			ranges.push({ start, end: lines.length, complete: content.complete, hiddenLines: content.hiddenLines });
+			if (!content.complete) lines.push(this.#truncationMarker(false));
+			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");
 		}
 		if (lines.length === 0) lines.push("No content in this category.");
@@ -488,7 +479,7 @@ export class ContextViewer implements Component {
 		return this.#previewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
 			if (selected && !range.complete && offset + index === range.end - 1)
-				line = truncateToWidth(this.#truncationMarker(range.hiddenLines, true), contentWidth - 1);
+				line = truncateToWidth(this.#truncationMarker(true), contentWidth - 1);
 			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
 		});
 	}
@@ -710,7 +701,7 @@ export class ContextViewer implements Component {
 				for (let line = range.start; line < range.end; line++) {
 					const content =
 						selected && !range.complete && line === range.end - 1
-							? this.#truncationMarker(range.hiddenLines, true)
+							? this.#truncationMarker(true)
 							: cache.lines[line]!;
 					lines.push({
 						...text(styledSpans(content || " "), { wrap: "word" }),

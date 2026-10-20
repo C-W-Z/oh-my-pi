@@ -519,7 +519,7 @@ describe("ContextViewer preview boundaries", () => {
 		h.resize(12);
 		h.render(48);
 		select(h.viewer, "tool-output");
-		expect(h.render(48).join("\n")).not.toContain("single-line-tail");
+		expect(h.render(48).join("\n")).toContain("… more");
 		h.viewer.handleInput("\r");
 		h.render(48);
 		scrollToText(h.viewer, () => h.render(48), "single-line-tail");
