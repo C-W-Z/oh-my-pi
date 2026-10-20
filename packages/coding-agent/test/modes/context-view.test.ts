@@ -72,6 +72,10 @@ function category(data: ContextViewData, id: string) {
 	return data.categories.find(category => category.id === id)!;
 }
 
+function totalTokens(data: ContextViewData): number {
+	return data.categories.reduce((sum, category) => sum + category.tokens, 0);
+}
+
 const reply = (content: AssistantMessage["content"]): AssistantMessage => ({
 	role: "assistant",
 	content,
@@ -105,7 +109,7 @@ describe("context snapshot", () => {
 		expect(data.breakdown.snapcompact?.savedTokens).toBeGreaterThan(0);
 		const plain = buildSessionContextView(sessionWith({ prompt }));
 		expect(plain.breakdown.snapcompact).toBeUndefined();
-		expect(data.estimatedTokens).toBe(plain.estimatedTokens);
+		expect(totalTokens(data)).toBe(totalTokens(plain));
 		expect(data.free + data.buffer + data.usage).toBe(data.window);
 	});
 
@@ -119,7 +123,7 @@ describe("context snapshot", () => {
 			settings: Settings.isolated({ "compaction.enabled": true, "todo.enabled": false }),
 		});
 		const data = buildSessionContextView(session);
-		expect(data.estimatedTokens).toBeGreaterThan(data.window);
+		expect(totalTokens(data)).toBeGreaterThan(data.window);
 		expect(data.usage).toBe(100);
 		expect(data.buffer).toBeGreaterThan(0);
 		expect(data.free + data.buffer).toBe(data.window - 100);
@@ -163,7 +167,7 @@ describe("context snapshot", () => {
 			const fullPromptTokens = system.entries.reduce((sum, entry) => sum + entry.tokens, 0);
 			expect(system.tokens).toBe(fullPromptTokens - shared.tokens);
 			expect(system.tokens + category(data, "skills").tokens).toBe(fullPromptTokens);
-			expect(data.estimatedTokens).toBe(fullPromptTokens + category(data, "built-in-tools").tokens);
+			expect(totalTokens(data)).toBe(fullPromptTokens + category(data, "built-in-tools").tokens);
 			expect(file).not.toHaveBeenCalled();
 			file.mockRestore();
 		}
@@ -254,7 +258,7 @@ describe("context snapshot", () => {
 			"[Redacted thinking]",
 		]);
 		expect(category(data, "tool-calls").entries[0]?.text).toContain('"path": "notes.txt"');
-		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countMessages([message]));
+		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
 		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-encoded-thinking|private-ciphertext/);
 	});
 
@@ -269,22 +273,22 @@ describe("context snapshot", () => {
 		};
 		const session = sessionWith({ prompt: [], messages: [message] });
 		const initial = buildSessionContextView(session);
-		expect(initial.estimatedTokens).toBe(1000);
+		expect(totalTokens(initial)).toBe(1000);
 		expect(category(initial, "assistant-thinking").tokens).toBe(1000 - category(initial, "tool-calls").tokens);
 
 		session.agent.appendMessage({ ...reply([]), stopReason: "length" });
-		expect(buildSessionContextView(session).estimatedTokens).toBe(1000);
+		expect(totalTokens(buildSessionContextView(session))).toBe(1000);
 
 		const next = reply([{ type: "text", text: "new response" }]);
 		session.agent.appendMessage(next);
 		const updated = buildSessionContextView(session);
-		expect(updated.estimatedTokens).toBe(
+		expect(totalTokens(updated)).toBe(
 			session.agent.tokenizer.countMessage(message) + session.agent.tokenizer.countMessage(next),
 		);
 		expect(category(updated, "assistant-thinking").tokens).toBe(
 			session.agent.tokenizer.countTokens("retained excerpt"),
 		);
-		expect(initial.estimatedTokens).toBe(1000);
+		expect(totalTokens(initial)).toBe(1000);
 		expect(JSON.stringify(updated)).not.toContain("private-signature");
 	});
 
@@ -349,7 +353,7 @@ describe("context snapshot", () => {
 			{ type: "web_search_result", title: "Release notes", url: "https://example.org/releases" },
 		]);
 		expect(category(data, "assistant-messages").entries).toEqual([]);
-		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countMessages([message]));
+		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
 		expect(JSON.stringify(data)).not.toMatch(/private-ciphertext|private-signature/);
 		expect(message).toEqual(before);
 	});
@@ -380,7 +384,7 @@ describe("context snapshot", () => {
 		expect(thinking.tokens).toBe(1_000);
 		expect(thinking.entries).toEqual([expect.objectContaining({ tokens: 1_000, timestamp: message.timestamp })]);
 		expect(category(payloadOnly, "assistant-messages").tokens).toBe(visibleTokens);
-		expect(payloadOnly.estimatedTokens).toBe(visibleTokens + 1_000);
+		expect(totalTokens(payloadOnly)).toBe(visibleTokens + 1_000);
 		expect(JSON.stringify(payloadOnly)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
 		expect(session.messages).toEqual(before);
 
@@ -394,18 +398,18 @@ describe("context snapshot", () => {
 		const withBlock = buildSessionContextView(sessionWith({ model: reader, prompt: [], messages: [explicit] }));
 		expect(category(withBlock, "assistant-thinking").entries).toHaveLength(1);
 		expect(category(withBlock, "assistant-thinking").tokens).toBe(1_000);
-		expect(withBlock.estimatedTokens).toBe(payloadOnly.estimatedTokens);
+		expect(totalTokens(withBlock)).toBe(totalTokens(payloadOnly));
 		expect(JSON.stringify(withBlock)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
 
 		session.agent.setModel(getBundledModel("openai-codex", "gpt-6-sol")!);
 		const changedReader = buildSessionContextView(session);
 		expect(category(changedReader, "assistant-thinking").entries).toEqual([]);
-		expect(changedReader.estimatedTokens).toBe(session.agent.tokenizer.countTokens(text));
+		expect(totalTokens(changedReader)).toBe(session.agent.tokenizer.countTokens(text));
 
 		session.agent.setModel({ ...reader, compat: { ...reader.compat, filterReasoningHistory: true } });
 		const filtered = buildSessionContextView(session);
 		expect(category(filtered, "assistant-thinking").entries).toEqual([]);
-		expect(filtered.estimatedTokens).toBe(session.agent.tokenizer.countTokens(text));
+		expect(totalTokens(filtered)).toBe(session.agent.tokenizer.countTokens(text));
 	});
 
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {

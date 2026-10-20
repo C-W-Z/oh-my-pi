@@ -956,7 +956,7 @@ export class CommandController {
 	handleContextCommand(): void {
 		const data = buildSessionContextView(this.ctx.session);
 		if (!(data.window > 0) || !Number.isFinite(data.window)) {
-			this.ctx.showWarning("Context usage is unavailable: no model is selected for this session.");
+			this.ctx.showWarning("Context usage is unavailable: the model's context window is unknown or invalid.");
 			return;
 		}
 		this.#clearReport();

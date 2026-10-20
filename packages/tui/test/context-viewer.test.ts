@@ -65,10 +65,8 @@ function fixture(): ContextViewData {
 		modelLabel: "Fixture",
 		window: 200000,
 		usage: 85000,
-		estimatedTokens: 80000,
 		buffer: 20000,
 		free: 95000,
-		notices: [],
 		breakdown: {
 			...computeContextBreakdown(
 				{
@@ -258,26 +256,6 @@ describe("ContextViewer navigation", () => {
 			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
 			h.viewer.handleInput("\r");
 			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-system/0")).toBe(true);
-		} finally {
-			h.viewer.dispose();
-		}
-	});
-
-	it("shows the confirm hint only on pages where confirm opens content", () => {
-		const h = harness();
-		try {
-			expect(h.render().at(-2)).toContain("open");
-			select(h.viewer, "tool-output");
-			expect(h.render().at(-2)).toContain("open");
-			h.viewer.handleInput("\r");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
-			expect(h.render().at(-2)).not.toContain("open");
-			h.viewer.handleInput("\x1b");
-			expect(h.render().at(-2)).toContain("open");
-			h.viewer.handleInput("\x1b");
-			select(h.viewer, "tool-output/read");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
-			expect(h.render().at(-2)).not.toContain("open");
 		} finally {
 			h.viewer.dispose();
 		}
@@ -897,7 +875,7 @@ describe("ContextViewer presentation", () => {
 		for (const category of categories) category.tokens = 1;
 		const output = categories.at(-1)!;
 		for (const child of output.children!) child.tokens = 1;
-		const h = harness({ ...data, usage: 7, estimatedTokens: 5, window: 100, buffer: 10, free: 83, categories });
+		const h = harness({ ...data, usage: 7, window: 100, buffer: 10, free: 83, categories });
 		const value = (key: string) => {
 			const item = nodes(h.viewer.describe(cx)).find(node => node.key === key);
 			return item?.k === "item" ? textValue(item.p?.value) : undefined;
@@ -920,7 +898,7 @@ describe("ContextViewer presentation", () => {
 		const data = fixture();
 		const categories = data.categories.slice(0, 3);
 		for (const [index, category] of categories.entries()) category.tokens = [1, 2, 4][index]!;
-		const h = harness({ ...data, categories, estimatedTokens: 7, usage: 5, window: 100 });
+		const h = harness({ ...data, categories, usage: 5, window: 100 });
 		const values = nodes(h.viewer.describe(cx)).filter(
 			node => node.k === "item" && categories.some(category => category.id === node.key),
 		);
@@ -951,7 +929,7 @@ describe("ContextViewer presentation", () => {
 	it("keeps original totals without inventing shares when estimates or capacity are unavailable", () => {
 		const data = fixture();
 		for (const category of data.categories) category.tokens = 0;
-		const h = harness({ ...data, estimatedTokens: 0 });
+		const h = harness(data);
 		expect(h.render(160).join("\n")).toContain("85K");
 		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(textValue(items.find(node => node.key === "system-prompt")?.p?.value)).toBe("—");

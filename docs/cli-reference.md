@@ -80,6 +80,8 @@ provider payload. Opening the viewer does not run extension `context` or
 encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cwd
 injection are outside the base message projection. Category token counts and
 allocation shares are estimates, not exact final wire counts.
+Snapcompact's post-conversion token total is an estimate, not a prediction of the
+next provider request's exact size.
 
 System Prompt entries show the full effective prompt blocks, including loaded
 instruction files and skill descriptions. Skills is an estimate-only overview row
@@ -104,8 +106,8 @@ are omitted from the viewer without changing token estimates or saved messages.
 Use only the configured `tui.select.up` / `tui.select.down` keys (arrow keys by
 default) to select and scroll. To use `k`/`j`, bind them to these actions in
 `keybindings.yml`; they are not fixed aliases. The footer shows each action's
-primary bound key and omits unbound actions. Open content with
-`tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
+primary bound key, omits unbound actions, and shows open only when content can be
+opened. Open content with `tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
 (Esc or Ctrl+C by default). Enter and Esc are not fixed aliases.
 Oversized entries scroll one line at a time before selection advances. The viewer
 does not handle `tui.select.pageUp` / `tui.select.pageDown` or fixed Home/End

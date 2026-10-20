@@ -104,9 +104,8 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		});
 	}
 	const groups = new Map<string, ContextViewCategory>();
-	const chronology = new Map<string, number>();
 	const output = byId.get("tool-output")!;
-	const addOutput = (name: string, entry: ContextViewEntry, timestamp: number): void => {
+	const addOutput = (name: string, entry: ContextViewEntry): void => {
 		let group = groups.get(name);
 		if (!group) {
 			group = { id: "tool-output", key: `tool-output/tool-${groups.size}`, label: name, tokens: 0, entries: [] };
@@ -114,7 +113,6 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		}
 		group.entries.push(entry);
 		group.tokens += entry.tokens;
-		chronology.set(entry.id, timestamp);
 		add("tool-output", entry);
 	};
 	const serverToolNames = new Map<string, string>();
@@ -198,7 +196,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 						tokens: blockTokens[blockIndex]!,
 					};
 					if (isCall) add(category, entry);
-					else addOutput(name, entry, original.timestamp);
+					else addOutput(name, entry);
 					continue;
 				}
 				const category =
@@ -232,19 +230,15 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		} else if (message.role === "toolResult" || execution) {
 			const name = message.role === "toolResult" ? message.toolName : execution!;
 			const call = message.role === "toolResult" ? message.toolCallId : undefined;
-			addOutput(
-				name,
-				{
-					id: `tool-output/${prefix}`,
-					label: name,
-					info,
-					text: contentText(message.content),
-					timestamp: original.timestamp,
-					callId: call,
-					tokens: tokenizer.countMessages([message]),
-				},
-				original.timestamp,
-			);
+			addOutput(name, {
+				id: `tool-output/${prefix}`,
+				label: name,
+				info,
+				text: contentText(message.content),
+				timestamp: original.timestamp,
+				callId: call,
+				tokens: tokenizer.countMessages([message]),
+			});
 		} else {
 			add("user-messages", {
 				id: `user-messages/${prefix}`,
@@ -256,22 +250,18 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			});
 		}
 	}
-	const chronological = (a: ContextViewEntry, b: ContextViewEntry): number =>
-		(chronology.get(a.id) ?? 0) - (chronology.get(b.id) ?? 0);
+	const chronological = (a: ContextViewEntry, b: ContextViewEntry): number => (a.timestamp ?? 0) - (b.timestamp ?? 0);
 	output.entries.sort(chronological);
 	output.children = [...groups.values()].sort((a, b) => b.tokens - a.tokens);
 	for (const group of output.children) group.entries.sort(chronological);
-	const estimatedTokens = categories.reduce((sum, category) => sum + category.tokens, 0);
 	const window = breakdown.contextWindow;
 	return {
 		modelLabel: session.model?.name ?? session.model?.id ?? "no model",
 		window,
 		usage: breakdown.usedTokens,
-		estimatedTokens,
 		buffer: breakdown.autoCompactBufferTokens,
 		free: breakdown.freeTokens,
 		breakdown,
 		categories,
-		notices: [],
 	};
 }

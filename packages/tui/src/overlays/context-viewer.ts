@@ -52,12 +52,10 @@ export interface ContextViewData {
 	readonly modelLabel: string;
 	readonly window: number;
 	readonly usage: number;
-	readonly estimatedTokens: number;
 	readonly buffer: number;
 	readonly free: number;
 	readonly breakdown: ContextBreakdown;
 	readonly categories: readonly ContextViewCategory[];
-	readonly notices: readonly string[];
 }
 
 interface OverviewRow {
@@ -120,7 +118,7 @@ export class ContextViewer implements Component {
 	#previewCache:
 		| { category: ContextViewCategory; width: number; height: number; lines: string[]; ranges: EntryRange[] }
 		| undefined;
-	#fullCache: { entry: ContextViewEntry; width: number; lines: string[] } | undefined;
+	#fullCache: { entry: ContextViewEntry; width: number } | undefined;
 	#wrapped = new Map<string, { width: number; lines: string[] }>();
 	#safeEntries = new Map<string, string>();
 	#sourceLineCounts = new Map<string, number>();
@@ -410,8 +408,6 @@ export class ContextViewer implements Component {
 		const listWidth = geometry ? width - geometry.width - 3 : width;
 		const source = this.#overview.items.map(item => this.#legendLine(item, Math.max(0, listWidth - 1)));
 		const diagnostics = contextSnapcompactLines(this.#data.breakdown);
-		for (const notice of this.#data.notices)
-			source.push(...wrapTextWithAnsi(theme.fg("warning", this.#safe(notice)), Math.max(1, listWidth - 1)));
 		for (const line of diagnostics)
 			source.push(...wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, listWidth - 1)));
 		this.#overviewScroll.setHeight(height);
@@ -513,7 +509,7 @@ export class ContextViewer implements Component {
 				),
 				...this.#entryLines(entry, Math.max(1, width - 1)),
 			];
-			this.#fullCache = { entry, width, lines };
+			this.#fullCache = { entry, width };
 			this.#fullScroll.setLines(lines);
 		}
 	}
@@ -537,7 +533,11 @@ export class ContextViewer implements Component {
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
 		const navigation = [editorKey("tui.select.up"), editorKey("tui.select.down")].filter(Boolean).join("/");
-		const confirm = this.#state === "entry" ? "" : editorKey("tui.select.confirm");
+		const canOpen =
+			this.#state === "overview"
+				? !!this.#overview.selectedItem?.category
+				: this.#state === "category" && !!this.#entries.selectedItem;
+		const confirm = canOpen ? editorKey("tui.select.confirm") : "";
 		const cancel = editorKey("tui.select.cancel");
 		const hints = [
 			navigation && `${navigation} select/scroll`,
@@ -695,8 +695,6 @@ export class ContextViewer implements Component {
 			} else children.push(list);
 			const diagnostics = contextSnapcompactLines(this.#data.breakdown);
 			for (const line of diagnostics) children.push(text([span(line, "dim")], { wrap: "word" }));
-			for (const notice of this.#data.notices)
-				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));
 			const body = children.splice(0);
 			if (meter) children.push(...meter);
 			else for (const line of this.#summary()) children.push(text([span(line, "dim")], { wrap: "word" }));

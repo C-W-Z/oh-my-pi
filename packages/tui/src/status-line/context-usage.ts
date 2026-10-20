@@ -695,10 +695,10 @@ function buildSnapcompactParts(breakdown: ContextBreakdown): LegendPart[][] {
 			}
 			if (snap.savedTokens > 0) {
 				lines.push([
-					{ t: "  Next request: " },
+					{ t: "  Estimated after Snapcompact: " },
 					{ t: `~${formatNumber(Math.max(0, usedTokens - snap.savedTokens))}`, s: "strong" },
 					{ t: " " },
-					{ t: "tokens on the wire", s: "dim" },
+					{ t: "tokens", s: "dim" },
 				]);
 			}
 		}
