@@ -372,9 +372,10 @@ export class ContextViewer implements Component {
 	}
 
 	#truncationMarker(hiddenLines: number, selected: boolean): string {
+		const confirm = selected ? editorKey("tui.select.confirm") : "";
 		return (
 			theme.fg("dim", `  … +${hiddenLines} lines`) +
-			(selected ? theme.fg("dim", " · ") + theme.fg("accent", "Enter - View Content") : "")
+			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} - View Content`) : "")
 		);
 	}
 
