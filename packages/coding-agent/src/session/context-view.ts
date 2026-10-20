@@ -49,7 +49,7 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
-/** Inspect retained server-tool metadata without exposing opaque replay fields. */
+/** Format retained server-tool metadata, omitting known unreadable replay fields for readability. */
 function serverToolText(block: unknown): string {
 	try {
 		return (
