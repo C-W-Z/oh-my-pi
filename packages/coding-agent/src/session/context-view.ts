@@ -48,6 +48,21 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
+/** Inspect retained server-tool metadata without exposing opaque replay fields. */
+function serverToolText(block: unknown): string {
+	try {
+		return (
+			JSON.stringify(
+				block,
+				(key, value: unknown) => (key === "encrypted_content" || key === "signature" ? undefined : value),
+				2,
+			) ?? ""
+		);
+	} catch {
+		return "[Content unavailable]";
+	}
+}
+
 /** Sample once on open without session hooks, provider transforms, or file I/O. */
 export function buildSessionContextView(session: AgentSession): ContextViewData {
 	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
@@ -218,6 +233,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 		chronology.set(entry.id, timestamp);
 		add("tool-output", entry);
 	};
+	const serverToolNames = new Map<string, string>();
 	const sourceMessages = session.agent.state.messages;
 	for (const { message, sourceIndex: messageIndex, convertedIndex } of convertMessagesForContextView(sourceMessages)) {
 		const original = sourceMessages[messageIndex]!;
@@ -273,6 +289,29 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 			}
 			let thinkingIndex = 0;
 			for (const [blockIndex, block] of message.content.entries()) {
+				if (block.type === "anthropicServerTool") {
+					const retained = block.block;
+					const isCall = retained.type === "server_tool_use";
+					const callId = isCall ? retained.id : retained.tool_use_id;
+					const name = isCall
+						? retained.name
+						: (serverToolNames.get(callId) ??
+							(retained.type === "web_search_tool_result" ? "web_search" : "tool_search"));
+					if (isCall) serverToolNames.set(callId, name);
+					const category = isCall ? "tool-calls" : "tool-output";
+					const entry: ContextViewEntry = {
+						id: `${category}/${prefix}/${blockIndex}`,
+						label: name,
+						info,
+						text: serverToolText(retained),
+						timestamp: original.timestamp,
+						callId,
+						tokens: blockTokens[blockIndex]!,
+					};
+					if (isCall) add(category, entry);
+					else addOutput(name, entry, original.timestamp);
+					continue;
+				}
 				const category =
 					block.type === "toolCall"
 						? "tool-calls"

@@ -429,6 +429,72 @@ describe("context snapshot", () => {
 		expect(JSON.stringify(data)).not.toMatch(/private-signature|private-encoded-thinking|private-ciphertext/);
 	});
 
+	it("groups retained server-tool calls and results without exposing encrypted replay fields", () => {
+		const message = reply([
+			{
+				type: "anthropicServerTool",
+				block: { type: "server_tool_use", id: "search", name: "web_search", input: { query: "release notes" } },
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "server_tool_use",
+					id: "tools",
+					name: "tool_search_tool_regex",
+					input: { pattern: "read.*" },
+				},
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "tool_search_tool_result",
+					tool_use_id: "tools",
+					content: [{ type: "tool_reference", tool_name: "read_file" }],
+				},
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "web_search_tool_result",
+					tool_use_id: "search",
+					content: [
+						{
+							type: "web_search_result",
+							title: "Release notes",
+							url: "https://example.org/releases",
+							encrypted_content: "private-ciphertext",
+							signature: "private-signature",
+						},
+					],
+				},
+			},
+		]);
+		const session = sessionWith({ prompt: [], messages: [message] });
+		const before = structuredClone(message);
+		const data = buildSessionContextView(session);
+		const calls = category(data, "tool-calls").entries;
+		expect(calls.map(entry => [entry.label, entry.callId])).toEqual([
+			["web_search", "search"],
+			["tool_search_tool_regex", "tools"],
+		]);
+		expect(JSON.parse(calls[0]!.text).input).toEqual({ query: "release notes" });
+		const results = category(data, "tool-output");
+		expect(results.entries.map(entry => [entry.label, entry.callId, entry.timestamp])).toEqual([
+			["tool_search_tool_regex", "tools", message.timestamp],
+			["web_search", "search", message.timestamp],
+		]);
+		expect(JSON.parse(results.entries[0]!.text).content).toEqual([
+			{ type: "tool_reference", tool_name: "read_file" },
+		]);
+		expect(JSON.parse(results.entries[1]!.text).content).toEqual([
+			{ type: "web_search_result", title: "Release notes", url: "https://example.org/releases" },
+		]);
+		expect(category(data, "assistant-messages").entries).toEqual([]);
+		expect(data.estimatedTokens).toBe(session.agent.tokenizer.countMessages([message]));
+		expect(JSON.stringify(data)).not.toMatch(/private-ciphertext|private-signature/);
+		expect(message).toEqual(before);
+	});
+
 	it("counts payload-only reasoning safely and does not duplicate it beside explicit thinking", () => {
 		const reader = getBundledModel<"openai-codex-responses">("openai-codex", "gpt-6.1-sol")!;
 		const reasoning = { type: "reasoning", id: "rs_private", summary: [], encrypted_content: "private-ciphertext" };

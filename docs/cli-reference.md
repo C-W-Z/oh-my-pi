@@ -100,6 +100,11 @@ or signatures. Counts follow the active reader's replay-aware tokenizer, exclude
 reasoning it filters or cannot replay, and do not double-count payload reasoning
 already attributed to explicit thinking blocks.
 
+Retained Anthropic web-search and tool-search calls appear in Tool Calls, with
+their results grouped in Tool Output by tool name and linked by call ID. Readable
+arguments and result metadata are shown; encrypted replay content and signatures
+are omitted from the viewer without changing token estimates or saved messages.
+
 Use only the configured `tui.select.up` / `tui.select.down` keys (arrow keys by
 default) to select and scroll. To use `k`/`j`, bind them to these actions in
 `keybindings.yml`; they are not fixed aliases. The footer shows each action's
