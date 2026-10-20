@@ -28,6 +28,7 @@ import {
 	type ContextBreakdown,
 	contextSnapcompactLines,
 	contextUsageHead,
+	contextUsageSummary,
 	describeContextMeter,
 } from "../status-line/context-usage";
 import { ensureThemeSync, theme } from "../theme/theme";
@@ -221,7 +222,6 @@ export class ContextViewer implements Component {
 			getSearchText: item => item.label,
 			isDisabled: item => !item.category,
 		});
-		this.#header.setHeight(3);
 		this.#footer.setHeight(1);
 		this.#panel.addChild(this.#header);
 		this.#panel.addChild(this.#body);
@@ -385,25 +385,15 @@ export class ContextViewer implements Component {
 	}
 
 	#summary(): string[] {
-		const { usage, window, buffer, free } = this.#data;
-		return [
-			`${this.#safe(this.#data.modelLabel)} · ${formatNumber(window)} context · Read-only snapshot`,
-			`Used ${formatNumber(usage)} · Buffer ${formatNumber(buffer)} · Free ${formatNumber(free)}${usage > window ? ` · ${formatNumber(usage - window)} over window` : ""}`,
-			this.#allocationAvailable
-				? "Estimated category shares · Reopen to update"
-				: "Category estimates unavailable · Reopen to update",
-		];
-	}
-
-	#diagnostics(): string[] {
-		const { usage, breakdown } = this.#data;
-		const threshold = breakdown.thresholdTokens;
-		return [
-			threshold === undefined
-				? "Compaction off"
-				: `Compaction at ${formatNumber(threshold)} · ${formatNumber(Math.abs(threshold - usage))} ${usage > threshold ? "over threshold" : "until threshold"}`,
-			...contextSnapcompactLines(breakdown),
-		];
+		if (this.#state !== "overview") return [];
+		const { usage, window, free, breakdown } = this.#data;
+		const labels = contextUsageSummary({
+			contextWindow: window,
+			usedTokens: usage,
+			freeTokens: free,
+			thresholdTokens: breakdown.thresholdTokens,
+		});
+		return [`Used ${labels.used}${labels.detail}`, labels.room];
 	}
 
 	#legendLine(item: OverviewRow, width: number): string {
@@ -473,7 +463,7 @@ export class ContextViewer implements Component {
 		this.#mapVisible = !!geometry;
 		const listWidth = geometry ? width - geometry.width - 3 : width;
 		const source = this.#overview.items.map(item => this.#legendLine(item, Math.max(0, listWidth - 1)));
-		const diagnostics = this.#diagnostics();
+		const diagnostics = contextSnapcompactLines(this.#data.breakdown);
 		for (const notice of this.#data.notices)
 			source.push(...wrapTextWithAnsi(theme.fg("warning", this.#safe(notice)), Math.max(1, listWidth - 1)));
 		for (const line of diagnostics)
@@ -590,7 +580,9 @@ export class ContextViewer implements Component {
 		const terminalRows = Math.max(1, this.#getRows());
 		const summary = this.#layout();
 		this.#panel.title =
-			this.#state === "overview" ? `Context · ${this.#fit ? "Fit" : "Window"}` : this.#safe(this.#category!.label);
+			this.#state === "overview"
+				? `Context · ${this.#safe(this.#data.modelLabel)}`
+				: this.#safe(this.#category!.label);
 		this.#header.setHeight(summary.length);
 		this.#header.setLines(summary.map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
 		const lines =
@@ -792,7 +784,7 @@ export class ContextViewer implements Component {
 					);
 				children.push(row([col(grid), list], { gap: "lg" }));
 			} else children.push(list);
-			const diagnostics = meter ? contextSnapcompactLines(this.#data.breakdown) : this.#diagnostics();
+			const diagnostics = contextSnapcompactLines(this.#data.breakdown);
 			for (const line of diagnostics) children.push(text([span(line, "dim")], { wrap: "word" }));
 			for (const notice of this.#data.notices)
 				children.push(text([span(this.#safe(notice), "warning")], { wrap: "word" }));

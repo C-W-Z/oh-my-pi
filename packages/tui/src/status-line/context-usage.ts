@@ -800,29 +800,40 @@ function describeSnapcompact(breakdown: ContextBreakdown): NativeNode | undefine
 	return node("col", { role: "omp.context.snap" }, [head, ...rows], "snapcompact");
 }
 
-/** Shared native usage summary and stacked bar; callers provide the category list. */
-export function describeContextMeter(breakdown: ContextMeterData): [NativeNode, NativeNode] {
+/** Shared usage and compaction labels for ANSI and native context views. */
+export function contextUsageSummary(
+	breakdown: Pick<ContextBreakdown, "contextWindow" | "usedTokens" | "freeTokens" | "thresholdTokens">,
+) {
 	const { contextWindow: window, usedTokens, freeTokens, thresholdTokens } = breakdown;
-	const parts = contextMeterParts(breakdown);
-	const used = Math.min(1, usedTokens / window);
 	const room =
 		thresholdTokens === undefined
 			? `${formatNumber(freeTokens)} free`
 			: usedTokens >= thresholdTokens
 				? `Past auto-compaction at ${percentString(thresholdTokens, window, 0)}`
 				: `${formatNumber(thresholdTokens - usedTokens)} left before auto-compaction at ${percentString(thresholdTokens, window, 0)}`;
+	return {
+		used: formatNumber(usedTokens),
+		detail: ` of ${formatNumber(window)} tokens · ${percentString(usedTokens, window, 0)}`,
+		room,
+	};
+}
+
+/** Shared native usage summary and stacked bar; callers provide the category list. */
+export function describeContextMeter(breakdown: ContextMeterData): [NativeNode, NativeNode] {
+	const { contextWindow: window, usedTokens, thresholdTokens } = breakdown;
+	const parts = contextMeterParts(breakdown);
+	const used = Math.min(1, usedTokens / window);
+	const labels = contextUsageSummary(breakdown);
 	const summary = node(
 		"row",
 		{ role: "omp.context.summary", align: "baseline", wrap: true },
 		[
-			text(
-				[
-					span(formatNumber(usedTokens), "strong"),
-					span(` of ${formatNumber(window)} tokens · ${percentString(usedTokens, window, 0)}`, "dim"),
-				],
-				{ role: "omp.context.used", grow: 1, wrap: "none" },
-			),
-			text(room, { role: "omp.context.room", wrap: "none" }),
+			text([span(labels.used, "strong"), span(labels.detail, "dim")], {
+				role: "omp.context.used",
+				grow: 1,
+				wrap: "none",
+			}),
+			text(labels.room, { role: "omp.context.room", wrap: "none" }),
 		],
 		"summary",
 	);

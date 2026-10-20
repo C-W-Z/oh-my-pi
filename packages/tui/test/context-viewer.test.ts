@@ -226,12 +226,12 @@ describe("ContextViewer navigation", () => {
 			}
 			expect(h.closed()).toBe(0);
 			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			expect(h.render()[0]).toContain("Window");
+			const windowView = h.render();
 			for (const key of ["o", "b", "f"]) expect(h.viewer.capturesInput(key)).toBe(true);
 			h.viewer.handleInput("f");
-			expect(h.render()[0]).toContain("Fit");
+			expect(h.render()).not.toEqual(windowView);
 			h.viewer.handleInput("f");
-			expect(h.render()[0]).toContain("Window");
+			expect(h.render()).toEqual(windowView);
 			select(h.viewer, "tool-output", false);
 			h.viewer.handleInput("o");
 			expect(selected(h.viewer.describe(cx))).toBe("result/0");
@@ -243,7 +243,6 @@ describe("ContextViewer navigation", () => {
 			expect(selected(h.viewer.describe(cx))).toBe("result/0");
 			h.viewer.handleInput("b");
 			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
-			expect(h.render()[0]).toContain("Window");
 			h.viewer.handleInput("b");
 			expect(h.closed()).toBe(1);
 		} finally {
@@ -270,7 +269,6 @@ describe("ContextViewer navigation", () => {
 			}
 			expect(h.closed()).toBe(0);
 			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			expect(h.render()[0]).toContain("Window");
 			select(h.viewer, "tool-output");
 			h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
 			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
@@ -278,9 +276,9 @@ describe("ContextViewer navigation", () => {
 			expect(selected(h.viewer.describe(cx))).toBe("result/0");
 			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
 			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
-			h.viewer.describe(cx);
+			const windowView = h.render();
 			h.viewer.handleNativeEvent({ type: "action", key: "zoom", act: "zoom", mods: [] });
-			expect(h.render()[0]).toContain("Fit");
+			expect(h.render()).not.toEqual(windowView);
 			h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
 			expect(h.closed()).toBe(1);
 		} finally {
@@ -440,7 +438,7 @@ describe("ContextViewer navigation", () => {
 	it("clamps a Native page step to the selected entry tail before advancing selection", () => {
 		const data = fixture();
 		data.categories.find(category => category.id === "skills")!.entries = [
-			{ id: "skill/0", label: "first", tokens: 1, text: `${"body\n".repeat(6)}partial-page-tail` },
+			{ id: "skill/0", label: "first", tokens: 1, text: `${"body\n".repeat(9)}partial-page-tail` },
 			{ id: "skill/1", label: "next", tokens: 1, text: "next body" },
 		];
 		const h = harness(data);
@@ -536,6 +534,46 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("keeps usage in two overview rows and gives preview and full content the reclaimed rows", () => {
+		const data = fixture();
+		const usage = { contextWindow: 272000, usedTokens: 71000, freeTokens: 160200, thresholdTokens: 231200 };
+		const h = harness({
+			...data,
+			modelLabel: "GPT-6 Luna",
+			window: usage.contextWindow,
+			usage: usage.usedTokens,
+			free: usage.freeTokens,
+			buffer: 40800,
+			breakdown: { ...data.breakdown, ...usage },
+		});
+		data.categories[0]!.entries = [
+			{ id: "first", label: "first source", tokens: 1, text: "one\ntwo\nthree\nfour\nfive\nsource-tail" },
+			{ id: "second", label: "second source", tokens: 1, text: "other source" },
+		];
+		try {
+			const overview = h.render();
+			expect(overview[0]).toContain("Context · GPT-6 Luna");
+			expect(overview[1]).toMatch(/71K.*272K.*26%/);
+			expect(overview[2]).toMatch(/160K.*85%/);
+			expect(overview[3]).toContain("System Prompt");
+			h.resize(12);
+			h.viewer.handleInput("\r");
+			const preview = h.render();
+			expect(preview[1]).toContain("[first source]");
+			expect(preview.join("\n")).toContain("source-tail");
+			h.viewer.handleInput("\r");
+			const full = h.render();
+			expect(full[1]).toContain("[first source]");
+			expect(full.join("\n")).toContain("source-tail");
+			h.viewer.handleInput("\x1b");
+			h.render();
+			h.viewer.handleInput("\x1b");
+			expect(h.render()[1]).toMatch(/71K.*272K.*26%/);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("keeps buffer and free totals in the category list without disabled dimming or an extra footer rule", () => {
 		const h = harness();
 		try {
@@ -800,13 +838,12 @@ describe("ContextViewer presentation", () => {
 		expect(h.render(48).join("\n")).toContain("Call ID: call-123");
 	});
 
-	it("shows compaction and estimated wire savings in the overview without a diagnostics navigation level", () => {
+	it("shows estimated wire savings in the overview without a diagnostics navigation level", () => {
 		const data = fixture();
 		const h = harness(data);
 		const overview = h.render(160);
 		expect(overview.join("\n")).toContain("85K");
 		expect(overview.join("\n")).toContain("95K");
-		expect(overview.join("\n")).toContain("Compaction");
 		expect(h.viewer.capturesInput("d")).toBe(false);
 		h.viewer.handleInput("d");
 		expect(h.render(160)).toEqual(overview);
@@ -822,7 +859,7 @@ describe("ContextViewer presentation", () => {
 
 	it("preserves counts and percentage denominators when switching Window/Fit", () => {
 		const h = harness();
-		h.render();
+		const windowView = h.render();
 		const before = nodes(h.viewer.describe(cx))
 			.filter(node => node.k === "item")
 			.map(node => node.p);
@@ -832,9 +869,9 @@ describe("ContextViewer presentation", () => {
 			.filter(node => node.k === "item")
 			.map(node => node.p);
 		expect(after).toEqual(before);
-		expect(h.render()[0]).toContain("Fit");
+		expect(h.render()).not.toEqual(windowView);
 		h.viewer.handleInput("z");
-		expect(h.render()[0]).toContain("Window");
+		expect(h.render()).toEqual(windowView);
 	});
 
 	it("does not capture zoom for an empty, window-sized or hidden map", () => {
@@ -845,10 +882,10 @@ describe("ContextViewer presentation", () => {
 		]) {
 			const data = fixture();
 			const h = harness({ ...data, usage: usage!, window: window! });
-			h.render(width);
+			const before = h.render(width);
 			expect(h.viewer.capturesInput("z")).toBe(false);
 			h.viewer.handleInput("z");
-			expect(h.render(width)[0]).toContain("Window");
+			expect(h.render(width)).toEqual(before);
 		}
 	});
 
@@ -1020,7 +1057,6 @@ describe("ContextViewer presentation", () => {
 		const data = fixture();
 		for (const category of data.categories) category.tokens = 0;
 		const h = harness({ ...data, estimatedTokens: 0 });
-		expect(h.render(160).join("\n")).toContain("unavailable");
 		expect(h.render(160).join("\n")).toContain("85K");
 		expect(h.viewer.capturesInput("z")).toBe(false);
 		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
@@ -1029,7 +1065,7 @@ describe("ContextViewer presentation", () => {
 		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
 		expect(zero.viewer.capturesInput("z")).toBe(false);
 		const over = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
-		expect(over.render(160).join("\n")).toContain("5 over window");
+		expect(over.render(160)[1]).toMatch(/15.*10.*150%/);
 		const top = nodes(over.viewer.describe(cx)).find(node => node.key === "system-prompt");
 		expect(top?.k === "item" && textValue(top.p?.value)).toBe("4 · 40.0%");
 	});
@@ -1037,31 +1073,27 @@ describe("ContextViewer presentation", () => {
 	it("uses Used rather than raw estimates to enable Fit, including a zero-usage allocation", () => {
 		const data = fixture();
 		const h = harness({ ...data, usage: 20000, estimatedTokens: 400000 });
-		h.render();
+		const windowView = h.render();
 		expect(h.viewer.capturesInput("z")).toBe(true);
 		h.viewer.handleInput("z");
-		expect(h.render()[0]).toContain("Fit");
+		expect(h.render()).not.toEqual(windowView);
 		const zero = harness({ ...data, usage: 0, buffer: 20000, free: 180000 });
 		const values = nodes(zero.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(values.find(node => node.key === "tool-output")?.p?.value).toBe("0 · 0.0%");
 		expect(values.find(node => node.key === "free")?.p?.value).toBe("180K · 90.0%");
 	});
 
-	it("keeps disabled and exceeded compaction states and inactive Snapcompact reasons visible", () => {
+	it("keeps inactive Snapcompact reasons visible in the overview", () => {
 		const data = fixture();
-		const disabled = harness({ ...data, breakdown: { ...data.breakdown, thresholdTokens: undefined } });
-		expect(disabled.render(160).join("\n")).toContain("Compaction off");
-		const exceeded = harness({
+		const inactive = harness({
 			...data,
 			breakdown: {
 				...data.breakdown,
-				thresholdTokens: 80000,
 				snapcompact: { visionCapable: false, savedTokens: 0 },
 			},
 		});
-		expect(exceeded.render(160).join("\n")).toContain("5K over threshold");
-		exceeded.viewer.handleInput("\x1b[F");
-		expect(exceeded.render(160).join("\n")).toContain("no image input");
+		inactive.viewer.handleInput("\x1b[F");
+		expect(inactive.render(160).join("\n")).toContain("no image input");
 	});
 
 	it("keeps selected block gutters on visible body rows after the title scrolls away without marking separators", () => {
