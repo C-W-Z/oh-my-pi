@@ -680,7 +680,10 @@ export class ContextViewer implements Component {
 	}
 	describe(cx: DescribeContext): NativeNode {
 		this.#width = Math.max(1, cx.cols - 4);
-		this.#hour12 = cx.hour12;
+		if (this.#hour12 !== cx.hour12) {
+			this.#hour12 = cx.hour12;
+			this.invalidate();
+		}
 		this.#layout();
 		const meter = this.#state === "overview" && cx.supports("meter") ? this.#meter : undefined;
 		const children: NativeNode[] = [];

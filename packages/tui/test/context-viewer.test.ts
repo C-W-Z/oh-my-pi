@@ -995,6 +995,30 @@ describe("ContextViewer entry content", () => {
 		h.viewer.handleInput("\x1b");
 		expect(h.render(48).join("\n")).toContain("call-123");
 	});
+
+	it("refreshes cached preview and full-content timestamps when the clock format changes at the same width", () => {
+		const h = harness();
+		const context = { ...cx, cols: 160, hour12: true };
+		h.resize(32);
+		h.viewer.describe(context);
+		select(h.viewer, "tool-output");
+		for (const page of ["preview", "full"]) {
+			if (page === "full")
+				h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+			for (const hour12 of [true, false, true]) {
+				const expected = new Date(0).toLocaleString([], {
+					year: "numeric",
+					month: "2-digit",
+					day: "2-digit",
+					hour: "2-digit",
+					minute: "2-digit",
+					hour12,
+				});
+				expect(nativeText(h.viewer.describe({ ...context, hour12 }))).toContain(expected);
+				expect(h.render(160).join("\n")).toContain(expected);
+			}
+		}
+	});
 });
 
 describe("ContextViewer Snapcompact", () => {

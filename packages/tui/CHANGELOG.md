@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed context viewer timestamps retaining the previous clock format after switching between 12-hour and 24-hour time.
 - Fixed context viewer retaining full-content caches for previously viewed entries when browsing large outputs.
 - Fixed context viewer showing shared thinking counts as individual block usage and empty interrupted thinking as zero tokens.
 - Fixed the composer caret drifting one cell left per pasted image or video chip in terminals that draw the chip icon as a wide emoji (JetBrains terminal); the `unicode` preset now uses `📷`/`🎬` chip icons ([#16270](https://github.com/can1357/oh-my-pi/issues/16270))
