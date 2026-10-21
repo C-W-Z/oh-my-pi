@@ -283,7 +283,7 @@ export class ContextViewer implements Component {
 		return Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - reserved));
 	}
 
-	/** Bound the source prefix; each renderer applies its own visual-line budget. */
+	/** Bound the source before sanitizing and wrapping large outputs. */
 	#previewContent(entry: ContextViewEntry, budget: number): { metadata: string; body: string; complete: boolean } {
 		const maxChars = Math.max(1, this.#width) * budget * 2;
 		const metadata = this.#entryMetadata(entry, true).join("\n");
@@ -297,7 +297,7 @@ export class ContextViewer implements Component {
 		};
 	}
 
-	#ansiPreviewLines(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
+	#entryPreview(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
 		const content = this.#previewContent(entry, budget);
 		const lines: string[] = [];
 		let complete = content.complete;
@@ -385,13 +385,12 @@ export class ContextViewer implements Component {
 		);
 	}
 
-	#previewHint(selected: boolean, truncated: boolean): string {
+	#previewHint(selected: boolean): string {
 		const confirm = selected ? editorKey("tui.select.confirm") : "";
-		const parts = [
-			truncated ? theme.fg("dim", "… more") : "",
-			confirm ? theme.fg("accent", `${confirm} View Content`) : "",
-		].filter(Boolean);
-		return parts.length ? `  ${parts.join(theme.fg("dim", " · "))}` : "";
+		return (
+			theme.fg("dim", "  … more") +
+			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} View Content`) : "")
+		);
 	}
 
 	#share(tokens: number): string {
@@ -522,9 +521,9 @@ export class ContextViewer implements Component {
 			}
 			const entryWidth = Math.max(1, width - 1 - indent.length);
 			lines.push(`${indent}${truncateToWidth(this.#entryHeaderLine(entry), entryWidth)}`);
-			const content = this.#ansiPreviewLines(entry, entryWidth, this.#previewBudget(entry));
+			const content = this.#entryPreview(entry, entryWidth, this.#previewBudget(entry));
 			lines.push(...content.lines.map(line => `${indent}${line}`));
-			if (!content.complete) lines.push(this.#previewHint(false, true));
+			if (!content.complete) lines.push(this.#previewHint(false));
 			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");
 		}
@@ -551,7 +550,7 @@ export class ContextViewer implements Component {
 		return this.#ansiPreviewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
 			if (selected && !range.complete && offset + index === range.end - 1)
-				line = truncateToWidth(this.#previewHint(true, true), contentWidth - 1);
+				line = truncateToWidth(this.#previewHint(true), contentWidth - 1);
 			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
 		});
 	}
@@ -790,13 +789,16 @@ export class ContextViewer implements Component {
 					...(selected ? { reveal: "nearest" as const } : {}),
 				});
 				const budget = this.#previewBudget(entry);
-				const content = this.#previewContent(entry, budget);
-				const spans: TspSpan[] = [];
-				if (content.metadata) spans.push(span(content.metadata + (content.body ? "\n" : ""), "dim"));
-				if (content.body) spans.push(span(content.body));
-				if (spans.length) children.push({ ...text(spans, { wrap: "word", lines: budget }), key: "preview" });
-				const hint = this.#previewHint(selected, !content.complete);
-				if (hint) children.push({ ...text(styledSpans(hint), { wrap: "word", lines: 1 }), key: "hint" });
+				const width = Math.max(1, this.#width - 1 - (group ? 2 : 0));
+				const content = this.#entryPreview(entry, width, budget);
+				// Tern owns final wrapping; only omitted source creates a more row.
+				if (content.lines.length)
+					children.push({ ...text(styledSpans(content.lines.join("\n")), { wrap: "word" }), key: "preview" });
+				if (!content.complete)
+					children.push({
+						...text(styledSpans(this.#previewHint(selected)), { wrap: "word", lines: 1 }),
+						key: "hint",
+					});
 				return [
 					{
 						...node(

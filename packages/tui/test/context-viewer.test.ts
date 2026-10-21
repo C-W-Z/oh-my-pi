@@ -580,35 +580,65 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(h.render(48)).toEqual(preview);
 	});
 
-	it("gives Native metadata and unwrapped wide text one shared viewport-dependent line clamp", () => {
-		const info = `metadata ${"長".repeat(20)}`;
-		const body = `body ${"中文字".repeat(30)}`;
+	it("does not add an opening hint or a row when selecting a complete Native preview", () => {
 		const h = harness(
-			fixture({
-				id: "result/0",
-				label: "wide metadata",
-				tokens: 1,
-				info,
-				text: body,
-			}),
+			fixture(
+				{ id: "result/0", label: "multiline", tokens: 1, text: "first line\nsecond line" },
+				{ id: "result/1", label: "short", tokens: 1, text: "short body" },
+			),
 		);
-		h.viewer.describe(cx);
+		h.resize(12);
+		const context = { ...cx, cols: 48 };
+		const reconciler = new Reconciler("complete-preview");
+		h.viewer.describe(context);
 		select(h.viewer, "tool-output");
-		for (const [rows, cols] of [
-			[12, 48],
-			[8, 24],
-		] as const) {
-			h.resize(rows);
-			const root = h.viewer.describe({ ...cx, cols });
-			const block = nodes(root).find(node => node.k === "text" && textValue(node.p?.spans)?.startsWith(info));
-			if (block?.k !== "text") throw new Error("Native metadata and body must share a clamped text block");
-			expect(block?.p?.lines).toBeLessThanOrEqual(rows - 6);
-			const content = textValue(block?.p?.spans)!;
-			expect(content).toStartWith(`${info}\nbody `);
-			expect(content.split("\n")).toHaveLength(2);
-			expect(nativeText(root)).toContain("View Content");
+		reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, context);
+		for (const key of ["\x1b[B", "\x1b[A"]) {
+			h.viewer.handleInput(key);
+			const ops = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, context);
+			expect(ops.filter(op => op[0] === "add" || op[0] === "del")).toEqual([]);
+			const preview = nativeText(h.viewer.describe(context));
+			expect(preview).not.toContain("View Content");
+			expect(preview).not.toContain("… more");
 		}
 	});
+
+	for (const [name, content] of [
+		["multiline body", { text: `${"short row\n".repeat(20)}hidden-tail` }],
+		["wide single-line body", { text: `${"中文字 ".repeat(80)}hidden-tail` }],
+		["multiline metadata", { info: `${"metadata row\n".repeat(20)}hidden-tail`, text: "body after metadata" }],
+	] as const) {
+		it(`keeps a persistent Native more row when selecting a truncated ${name}`, () => {
+			const h = harness(
+				fixture(
+					{ id: "result/0", label: "truncated", tokens: 1, ...content },
+					{ id: "result/1", label: "complete", tokens: 1, text: "short body" },
+				),
+			);
+			h.resize(12);
+			const context = { ...cx, cols: 48 };
+			const reconciler = new Reconciler(`truncated-preview-${name}`);
+			h.viewer.describe(context);
+			select(h.viewer, "tool-output");
+			reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, context);
+			const selectedPreview = nativeText(h.viewer.describe(context));
+			expect(selectedPreview).toContain("… more");
+			expect(selectedPreview).toContain("View Content");
+			expect(selectedPreview).not.toContain("hidden-tail");
+			h.viewer.handleInput("\x1b[B");
+			const deselected = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, context);
+			expect(deselected.filter(op => op[0] === "add" || op[0] === "del")).toEqual([]);
+			const unselectedPreview = nativeText(h.viewer.describe(context));
+			expect(unselectedPreview).toContain("… more");
+			expect(unselectedPreview).not.toContain("View Content");
+			h.viewer.handleInput("\x1b[A");
+			const reselected = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, context);
+			expect(reselected.filter(op => op[0] === "add" || op[0] === "del")).toEqual([]);
+			expect(nativeText(h.viewer.describe(context))).toEqual(selectedPreview);
+			h.viewer.handleInput("\r");
+			expect(nativeText(h.viewer.describe(context))).toContain("hidden-tail");
+		});
+	}
 
 	it("emits a new Native scroll request for each repeated down input", () => {
 		const h = harness();
