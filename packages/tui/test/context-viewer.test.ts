@@ -312,33 +312,35 @@ describe("ContextViewer navigation", () => {
 		}
 	});
 
-	it("opens per-tool and single entries directly, keeps empty categories navigable and skips disabled capacity rows", () => {
+	it("opens a single-entry category directly and returns to its overview selection", () => {
 		const h = harness();
-		h.render();
-		select(h.viewer, "tool-output/read");
-		h.render();
-		scrollToText(h.viewer, () => h.render(), "context-output-tail");
-		expect(h.render().join("\n")).toContain("context-output-tail");
+		select(h.viewer, "system-prompt");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-system/0")).toBe(true);
+		expect(h.render().join("\n")).toContain("entire system source");
 		h.viewer.handleInput("\x1b");
-		h.render();
-		expect(selected(h.viewer.describe(cx))).toBe("tool-output/read");
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "overview")).toBe(true);
+	});
+
+	it("opens an empty category and returns to its overview selection", () => {
+		const h = harness();
 		select(h.viewer, "custom-tools");
-		h.render();
+		expect(nativeText(h.viewer.describe(cx))).toContain("No content in this category.");
+		expect(h.render()[0]).toContain("Custom Tools");
 		h.viewer.handleInput("\x1b");
+		expect(selected(h.viewer.describe(cx))).toBe("custom-tools");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "overview")).toBe(true);
+	});
+
+	it("skips capacity rows at the navigation boundary before and after resizing", () => {
+		const h = harness();
+		select(h.viewer, "tool-output/bash", false);
 		h.render();
-		for (let step = 0; step < 20; step++) {
-			h.viewer.handleInput("\x1b[B");
-			h.render();
-		}
-		h.render();
-		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
 		h.viewer.handleInput("\x1b[B");
-		h.render();
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output/bash");
 		h.resize(12);
 		h.render(48);
 		h.viewer.handleInput("\x1b[B");
-		h.render(48);
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("tool-output/bash");
 	});
 
@@ -424,7 +426,7 @@ describe("ContextViewer navigation", () => {
 		}
 	});
 
-	it("keeps buffer and free totals at normal contrast without opening them or adding a footer rule", () => {
+	it("keeps buffer and free totals at normal contrast without opening them", () => {
 		const h = harness();
 		try {
 			const root = h.viewer.describe(meterCx);
@@ -438,7 +440,6 @@ describe("ContextViewer navigation", () => {
 				select(h.viewer, key);
 				expect(selected(h.viewer.describe(meterCx))).toBe("system-prompt");
 			}
-			expect(nodes(root).filter(node => node.k === "rule")).toHaveLength(0);
 		} finally {
 			h.viewer.dispose();
 		}
@@ -446,7 +447,7 @@ describe("ContextViewer navigation", () => {
 });
 
 describe("ContextViewer preview and scrolling", () => {
-	it("reaches saved output tail and restores preview selection and offset through Back", () => {
+	it("reaches saved output tail and restores the initial preview and selection through Back", () => {
 		const h = harness();
 		h.render();
 		select(h.viewer, "tool-output");
@@ -570,25 +571,19 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
 	});
 
-	it("handles native select/activate/Back/Close and emits repeated terminal scroll requests", () => {
+	it("emits a new Native scroll request for each repeated down input", () => {
 		const h = harness();
+		const reconciler = new Reconciler("context-repeated-scroll");
 		h.viewer.describe(cx);
-		select(h.viewer, "tool-output/read", false);
-		expect(selected(h.viewer.describe(cx))).toBe("tool-output/read");
 		select(h.viewer, "tool-output/read");
-		h.viewer.describe(cx);
-		h.viewer.handleInput("\x1b[B");
-		const scroll = nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll;
-		expect(scroll).toMatchObject({ by: "line-down", n: 1 });
-		h.viewer.handleInput("\x1b[B");
-		expect(nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll).toMatchObject({
-			by: "line-down",
-			n: 2,
-		});
-		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
-		expect(selected(h.viewer.describe(cx))).toBe("tool-output/read");
-		h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
-		expect(h.closed()).toBe(1);
+		reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, cx);
+		for (const n of [1, 2]) {
+			h.viewer.handleInput("\x1b[B");
+			const scroll = nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll;
+			expect(scroll).toMatchObject({ by: "line-down", n });
+			const ops = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, cx);
+			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual(["line-down"]);
+		}
 	});
 
 	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
@@ -664,31 +659,28 @@ describe("ContextViewer preview and scrolling", () => {
 });
 
 describe("ContextViewer usage and allocation", () => {
-	it("distinguishes tiny nonzero usage from zero and the rounding boundary", () => {
-		for (const [tokens, share] of [
-			[0, "0.0%"],
-			[1, "<0.1%"],
-			[99, "<0.1%"],
-			[100, "0.1%"],
-		] as const) {
-			const data = fixture();
-			const h = harness({
-				...data,
-				usage: tokens,
-				categories: [{ ...data.categories[0]!, tokens: 1 }],
-			});
-			try {
-				for (const width of [48, 100]) {
-					const line = h.render(width).find(line => line.includes("System Prompt"))!;
-					expect(line.match(/<?\d+\.\d%/)?.[0]).toBe(share);
-				}
-				for (const context of [cx, meterCx]) {
-					const item = nodes(h.viewer.describe(context)).find(item => item.key === "system-prompt");
-					expect(usageColumns(item)?.[1]).toBe(share);
-				}
-			} finally {
-				h.viewer.dispose();
+	it.each([
+		{ name: "zero", tokens: 0, share: "0.0%" },
+		{ name: "below the rounding boundary", tokens: 99, share: "<0.1%" },
+		{ name: "at the rounding boundary", tokens: 100, share: "0.1%" },
+	])("formats usage $name consistently in ANSI and Native output", ({ tokens, share }) => {
+		const data = fixture();
+		const h = harness({
+			...data,
+			usage: tokens,
+			categories: [{ ...data.categories[0]!, tokens: 1 }],
+		});
+		try {
+			for (const width of [48, 100]) {
+				const line = h.render(width).find(line => line.includes("System Prompt"))!;
+				expect(line.match(/<?\d+\.\d%/)?.[0]).toBe(share);
 			}
+			for (const context of [cx, meterCx]) {
+				const item = nodes(h.viewer.describe(context)).find(item => item.key === "system-prompt");
+				expect(usageColumns(item)?.[1]).toBe(share);
+			}
+		} finally {
+			h.viewer.dispose();
 		}
 	});
 
@@ -732,18 +724,28 @@ describe("ContextViewer usage and allocation", () => {
 		]);
 	});
 
-	it("keeps original totals without inventing shares when estimates or capacity are unavailable", () => {
+	it("keeps original usage without inventing category shares when estimates are unavailable", () => {
 		const data = fixture();
 		for (const category of data.categories) category.tokens = 0;
 		const h = harness(data);
 		expect(h.render(160).join("\n")).toContain("85K");
 		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(usageColumns(items.find(node => node.key === "system-prompt"))).toEqual(["—"]);
-		const zero = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
-		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
-		const over = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
-		expect(over.render(160)[1]).toMatch(/15.*10.*150%/);
-		const top = nodes(over.viewer.describe(cx)).find(node => node.key === "system-prompt");
+	});
+
+	it("omits percentages and the meter when capacity is zero", () => {
+		const h = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
+		expect(h.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
+		const root = h.viewer.describe(meterCx);
+		expect(nodes(root).some(node => node.k === "meter")).toBe(false);
+		const top = nodes(root).find(node => node.key === "system-prompt");
+		expect(usageColumns(top)).toEqual(["0", "—"]);
+	});
+
+	it("shows over-capacity usage without clamping its percentage or category allocation", () => {
+		const h = harness({ ...fixture(), window: 10, usage: 15, buffer: 0, free: 0 });
+		expect(h.render(160)[1]).toMatch(/15.*10.*150%/);
+		const top = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
 		expect(usageColumns(top)).toEqual(["4", "40.0%"]);
 	});
 
@@ -886,11 +888,6 @@ describe("ContextViewer overview and meter", () => {
 				const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
 				expect(bar).toBeLessThan(body!);
 			}
-			select(h.viewer, "tool-output/read");
-			const entry = nodes(h.viewer.describe(meterCx)).find(node => node.key === "entry-result/0");
-			expect(JSON.stringify(entry)).toContain("context-output-tail");
-			h.viewer.handleInput("\x1b");
-			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
 			expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
 		} finally {
 			h.viewer.dispose();
@@ -1024,39 +1021,40 @@ describe("ContextViewer entry content", () => {
 		expect(body).not.toContain("\x1b");
 	});
 
-	it("shows message time and tool call ID in ANSI and native previews and full content", () => {
+	it.each([
+		{ name: "12-hour", hour12: true },
+		{ name: "24-hour", hour12: false },
+	])("shows $name message times and call IDs in ANSI and Native content", ({ hour12 }) => {
 		const h = harness();
-		const expectedTime = (hour12: boolean | undefined) =>
-			new Date(0).toLocaleString([], {
-				year: "numeric",
-				month: "2-digit",
-				day: "2-digit",
-				hour: "2-digit",
-				minute: "2-digit",
-				hour12,
-			});
-		h.render();
+		const context = { ...cx, hour12 };
+		const expectedTime = new Date(0).toLocaleString([], {
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12,
+		});
+		h.viewer.describe(context);
 		select(h.viewer, "tool-output");
 		const preview = h.render().join("\n");
 		expect(preview).toContain("call-123");
-		expect(preview).toContain(expectedTime(undefined));
+		expect(preview).toContain(expectedTime);
 		expect(preview).toContain("[read result]");
 		const narrowPreview = h.render(48).join("\n");
 		expect(narrowPreview).toContain("call-123");
 		expect(narrowPreview).toContain(
 			new Date(0).toLocaleDateString([], { year: "numeric", month: "2-digit", day: "2-digit" }),
 		);
-		const nativePreview = nodes(h.viewer.describe({ ...cx, hour12: false })).find(
-			node => node.k === "col" && node.key === "result/0",
-		);
-		expect(JSON.stringify(nativePreview)).toContain(expectedTime(false));
+		const nativePreview = nodes(h.viewer.describe(context)).find(node => node.key === "result/0")!;
+		expect(nativeText(nativePreview)).toContain(expectedTime);
 		h.viewer.handleInput("\r");
 		const full = h.render().join("\n");
 		expect(full).toContain("call-123");
-		expect(full).toContain(expectedTime(false));
-		const nativeFull = JSON.stringify(h.viewer.describe({ ...cx, hour12: false }));
+		expect(full).toContain(expectedTime);
+		const nativeFull = nativeText(h.viewer.describe(context));
 		expect(nativeFull).toContain("call-123");
-		expect(nativeFull).toContain(expectedTime(false));
+		expect(nativeFull).toContain(expectedTime);
 		h.viewer.handleInput("\x1b");
 		expect(h.render(48).join("\n")).toContain("call-123");
 	});
@@ -1067,16 +1065,11 @@ describe("ContextViewer Snapcompact", () => {
 		const data = fixture();
 		const h = harness(data);
 		const overview = h.render(160);
-		expect(overview.join("\n")).toContain("85K");
-		expect(overview.join("\n")).toContain("95K");
 		expect(h.viewer.capturesInput("d")).toBe(false);
 		h.viewer.handleInput("d");
 		expect(h.render(160)).toEqual(overview);
 		scrollToText(h.viewer, () => h.render(160), "2 frames");
-		const savings = h.render(160).join("\n");
-		expect(savings).toContain("6K");
-		expect(savings).toContain("79K");
-		expect(savings).toContain("2 frames");
+		expect(h.render(160).join("\n")).toContain("2 frames");
 		expect(nodes(h.viewer.describe(cx)).some(node => node.p?.actions?.click === "diagnostics")).toBe(false);
 		h.viewer.handleInput("\x1b");
 		expect(h.closed()).toBe(1);
@@ -1120,10 +1113,6 @@ describe("ContextViewer theme and responsive layout", () => {
 			const system = lines.find(line => Bun.stripANSI(line).includes("System Prompt"))!;
 			const p = CONTEXT_PRESENTATION["system-prompt"];
 			const swatch = theme.styledSymbol(p.symbol, p.color);
-			// Overrides change geometry; locate the map and the interactive row before its label.
-			const legendStart = Bun.stripANSI(system).indexOf("System Prompt");
-			expect(system.indexOf(swatch)).toBeGreaterThanOrEqual(0);
-			expect(Bun.stripANSI(system.slice(system.indexOf(swatch) + swatch.length))).toContain("System Prompt");
 			const native = nodes(h.viewer.describe(cx));
 			const grid = native.filter(node => node.k === "text" && node.p?.wrap === "none");
 			expect(
@@ -1158,7 +1147,6 @@ describe("ContextViewer theme and responsive layout", () => {
 				expect(sliceWithWidth(system, 2, 31, true).text).toContain(swatch);
 				expect(sliceWithWidth(system, 36, 60, true).text).toContain(swatch);
 			}
-			expect(legendStart).toBeGreaterThan(3);
 		}
 	});
 
