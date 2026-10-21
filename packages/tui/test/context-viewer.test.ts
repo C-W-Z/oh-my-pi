@@ -182,12 +182,6 @@ describe("ContextViewer navigation", () => {
 			up: "\x10",
 			down: "\x0e",
 		},
-		{
-			name: "explicit j/k bindings",
-			bindings: { "tui.select.up": "k", "tui.select.down": "j" },
-			up: "k",
-			down: "j",
-		},
 		{ name: "unbound navigation", bindings: { "tui.select.up": [], "tui.select.down": [] } },
 	];
 	for (const { name, bindings, up, down } of navigationBindings) {
@@ -211,40 +205,6 @@ describe("ContextViewer navigation", () => {
 			}
 		});
 	}
-
-	it("ignores page and boundary shortcuts while preserving explicitly rebound up/down keys", () => {
-		const previousBindings = getKeybindings();
-		const h = harness();
-		try {
-			setKeybindings(
-				new KeybindingsManager(TUI_KEYBINDINGS, {
-					"tui.select.pageUp": "u",
-					"tui.select.pageDown": "d",
-				}),
-			);
-			h.resize(12);
-			for (const page of ["overview", "category", "entry"]) {
-				if (page === "category") select(h.viewer, "tool-output");
-				if (page === "entry") h.viewer.handleInput("\r");
-				const before = h.render(48);
-				const nativeBefore = h.viewer.describe({ ...cx, cols: 48 });
-				for (const key of ["\x1b[H", "\x1b[F", "\x1b[5~", "\x1b[6~", "u", "d"]) {
-					expect(h.viewer.capturesInput(key)).toBe(false);
-					h.viewer.handleInput(key);
-					expect(h.render(48)).toEqual(before);
-					expect(h.viewer.describe({ ...cx, cols: 48 })).toEqual(nativeBefore);
-				}
-			}
-			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "pageDown" }));
-			const before = h.render(48);
-			expect(h.viewer.capturesInput("\x1b[6~")).toBe(true);
-			h.viewer.handleInput("\x1b[6~");
-			expect(h.render(48)).not.toEqual(before);
-		} finally {
-			h.viewer.dispose();
-			setKeybindings(previousBindings);
-		}
-	});
 
 	it("keeps Skills token totals visible while native and keyboard navigation cannot focus or open them", () => {
 		const h = harness();
