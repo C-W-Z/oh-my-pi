@@ -537,15 +537,31 @@ describe("ContextViewer preview and scrolling", () => {
 		reconcile();
 		expect(nativeText(h.viewer.describe(nativeCx))).toContain("next body");
 		h.viewer.handleInput("\x1b");
-		expect(reconcile().some(op => op[0] === "reveal" && op[2] === "nearest")).toBe(true);
+		expect(reconcile().filter(op => op[0] === "reveal")).toEqual([
+			["reveal", expect.stringMatching(/entries\/result%2F1\/head$/), "start"],
+		]);
 		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
 		h.viewer.handleInput("\x1b[A");
-		reconcile();
+		expect(
+			reconcile()
+				.filter(op => op[0] === "reveal")
+				.map(op => op[2]),
+		).toEqual(["nearest"]);
 		h.viewer.handleInput("\r");
 		reconcile();
 		const full = nativeText(h.viewer.describe(nativeCx));
 		expect(full).toContain("metadata-tail");
 		expect(full).toContain("native-output-tail");
+		h.viewer.handleInput("\x1b");
+		reconcile();
+		h.viewer.handleInput("\x1b");
+		reconcile();
+		select(h.viewer, "tool-output");
+		expect(
+			reconcile()
+				.filter(op => op[0] === "reveal")
+				.map(op => op[2]),
+		).toEqual(["nearest"]);
 	});
 
 	it("bounds ANSI metadata and body together while preserving hidden content through Enter and Back", () => {

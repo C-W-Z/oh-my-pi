@@ -15,6 +15,7 @@
 ### Fixed
 
 - Fixed native context previews adding an extra row on selection and showing inconsistent truncation hints.
+- Fixed native context viewer returning from full content without reliably revealing the selected entry.
 - Fixed context viewer timestamps retaining the previous clock format after switching between 12-hour and 24-hour time.
 - Fixed context viewer retaining full-content caches for previously viewed entries when browsing large outputs.
 - Fixed context viewer showing shared thinking counts as individual block usage and empty interrupted thinking as zero tokens.

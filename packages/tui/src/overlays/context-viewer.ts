@@ -13,7 +13,7 @@ import { ScrollView } from "../components/scroll-view";
 import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
 import { getKeybindings } from "../keybindings";
 import { col, item, node, row, span, text } from "../native/describe";
-import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
+import type { DescribeContext, NativeNode, NativeRevealAt, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
@@ -137,6 +137,7 @@ export class ContextViewer implements Component {
 		| undefined;
 	#entryBodyCache: { entry: ContextViewEntry; text: string } | undefined;
 	#ansiEntryLayoutWidth: number | undefined;
+	#nativePreviewRevealAt: NativeRevealAt = "nearest";
 	// Native scroll requests, not a viewport offset. The reconciler repeats each
 	// line step by the increment in `n`.
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
@@ -639,6 +640,7 @@ export class ContextViewer implements Component {
 			if (activation.kind !== "confirmed" || !activation.item.category) return;
 			this.#category = activation.item.category;
 			this.#entries.setItems(this.#category.entries, this.#category.entries[0]?.id);
+			this.#nativePreviewRevealAt = "nearest";
 			this.#ansiPreviewCache = undefined;
 			this.#ansiPreviewScroll.scrollToTop();
 			if (this.#category.entries.length === 1) this.#openEntry(this.#category.entries[0]!, "overview");
@@ -663,6 +665,7 @@ export class ContextViewer implements Component {
 	#back(): void {
 		if (this.#state === "entry") {
 			this.#state = this.#entryParent;
+			if (this.#entryParent === "category") this.#nativePreviewRevealAt = "start";
 			this.#entry = undefined;
 			this.#entryBodyCache = undefined;
 			this.#ansiEntryLayoutWidth = undefined;
@@ -786,7 +789,7 @@ export class ContextViewer implements Component {
 				children.push({
 					...text(group ? [span("  "), ...header] : header, { wrap: "word", lines: 1 }),
 					key: "head",
-					...(selected ? { reveal: "nearest" as const } : {}),
+					...(selected ? { reveal: this.#nativePreviewRevealAt } : {}),
 				});
 				const budget = this.#previewBudget(entry);
 				const width = Math.max(1, this.#width - 1 - (group ? 2 : 0));
