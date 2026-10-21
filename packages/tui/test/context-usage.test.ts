@@ -17,6 +17,7 @@ import {
 } from "@oh-my-pi/pi-agent-core/compaction";
 import { arkToWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import {
+	type ContextBreakdown,
 	type NonMessageTokenSource,
 	computeNonMessageBreakdown,
 	computeNonMessageTokens,
@@ -24,6 +25,7 @@ import {
 	estimateToolSchemaTokens,
 	getToolSchemaMetadataRevision,
 	invalidateToolSchemaMetadata,
+	renderContextUsage,
 } from "../src/status-line/context-usage";
 
 const tokenizer = new Tokenizer();
@@ -117,6 +119,82 @@ describe("estimateToolSchemaTokens", () => {
 		expect(reads).toBe(3);
 		estimateToolSchemaTokens(tools, new Tokenizer(), 2);
 		expect(reads).toBe(4);
+	});
+});
+
+/**
+ * Contract: the retained /context renderer surfaces Snapcompact savings,
+ * skipped conversions, and the estimated post-Snapcompact token count.
+ */
+describe("renderContextUsage Snapcompact section", () => {
+	const themeStub = {
+		fg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+	} as never;
+
+	function breakdownWith(snapcompact: ContextBreakdown["snapcompact"]): ContextBreakdown {
+		return {
+			model: { id: "test-model", name: "Test Model", contextWindow: 200000 } as never,
+			contextWindow: 200000,
+			categories: [],
+			usedTokens: 27929,
+			autoCompactBufferTokens: 0,
+			freeTokens: 172071,
+			snapcompact,
+		};
+	}
+
+	it("renders applied savings, skip reasons, and the estimated token count", () => {
+		const output = renderContextUsage(
+			breakdownWith({
+				visionCapable: true,
+				systemPrompt: {
+					applied: true,
+					scope: "all",
+					textTokens: 9768,
+					frames: 2,
+					imageTokens: 6600,
+					savedTokens: 3168,
+				},
+				toolResults: { total: 3, swapped: 0, textTokens: 0, frames: 0, imageTokens: 0, savedTokens: 0 },
+				savedTokens: 3168,
+			}),
+			themeStub,
+		);
+		expect(output).toContain("Snapcompact (estimated wire savings)");
+		expect(output).toContain("System prompt (all): saves ~3.2K (9.8K text → 2 frames ≈ 6.6K)");
+		expect(output).toContain("Tool results: none imaged (3 in history)");
+		expect(output).toContain("Estimated after Snapcompact: ~25K tokens");
+	});
+
+	it("explains why a system prompt remains text", () => {
+		const output = renderContextUsage(
+			breakdownWith({
+				visionCapable: true,
+				systemPrompt: {
+					applied: false,
+					scope: "agents-md",
+					textTokens: 1000,
+					frames: 0,
+					imageTokens: 0,
+					savedTokens: 0,
+					reason: "budget",
+				},
+				savedTokens: 0,
+			}),
+			themeStub,
+		);
+		expect(output).toContain("System prompt (AGENTS.md): stays text (image budget exhausted)");
+	});
+
+	it("reports text-only models as inactive", () => {
+		const output = renderContextUsage(breakdownWith({ visionCapable: false, savedTokens: 0 }), themeStub);
+		expect(output).toContain("Snapcompact: inactive (model has no image input)");
+	});
+
+	it("omits the section when no Snapcompact setting is on", () => {
+		const output = renderContextUsage(breakdownWith(undefined), themeStub);
+		expect(output).not.toContain("Snapcompact");
 	});
 });
 
