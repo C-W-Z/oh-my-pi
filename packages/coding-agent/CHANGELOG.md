@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed `/context` showing raw steering user messages instead of the steering envelope sent to the model.
 - Fixed `/context` showing misleading per-block thinking counts; shared reasoning now has a message-level total and unavailable counts for empty interrupted thinking.
 - Fixed `/context` hiding provider fields such as `signature` and `encrypted_content` from retained server-tool output.
 - Fixed `read` middle-eliding large file pages into an artifact; a page past the output spill threshold now stops at a line boundary with an exact `:N` continuation ([#16277](https://github.com/can1357/oh-my-pi/issues/16277))

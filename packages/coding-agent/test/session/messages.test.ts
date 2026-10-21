@@ -13,6 +13,7 @@ import {
 	SKILL_PROMPT_MESSAGE_TYPE,
 	type SkillPromptDetails,
 	stripImagesFromMessage,
+	wrapSteeringForModel,
 } from "../../src/session/messages";
 
 function customMessage(customType: string, attribution: "agent" | "user"): CustomMessage<SkillPromptDetails> {
@@ -170,6 +171,64 @@ function userMessage(text: string, timestamp: number): AgentMessage {
 }
 
 describe("convertMessagesForContextView", () => {
+	it("shows the model envelope for user steering without wrapping the production path twice", () => {
+		const source: AgentMessage = {
+			role: "user",
+			content: "Use the revised plan",
+			steering: true,
+			timestamp: 1,
+		};
+		const messages = [source];
+		const wrapped = wrapSteeringForModel(messages);
+		const production = convertToLlm(wrapped);
+		const viewed = convertMessagesForContextView(messages);
+
+		expect(viewed.map(entry => entry.message)).toEqual(production);
+		expect(viewed[0]).toMatchObject({ sourceIndex: 0, convertedIndex: 0 });
+		const content = production[0].content;
+		if (typeof content !== "string") throw new Error("Expected string steering content");
+		expect(content).toContain("Use the revised plan");
+		expect(content.match(/<system-notice>/g)).toHaveLength(1);
+		expect(convertToLlm(messages)).toEqual(production);
+		expect(convertToLlm(wrapSteeringForModel(wrapped))).toEqual(production);
+		expect(convertMessagesForContextView(wrapped).map(entry => entry.message)).toEqual(production);
+		expect(source).toEqual({
+			role: "user",
+			content: "Use the revised plan",
+			steering: true,
+			timestamp: 1,
+		});
+	});
+
+	it("preserves images and combines steering text consistently with the model path", () => {
+		const image = { type: "image" as const, data: "aaaa", mimeType: "image/png" };
+		const source: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "Inspect this" }, image, { type: "text", text: "before continuing" }],
+			steering: true,
+			timestamp: 1,
+		};
+		const messages = [source];
+		const viewed = convertMessagesForContextView(messages);
+		const production = convertToLlm(wrapSteeringForModel(messages));
+
+		expect(viewed.map(entry => entry.message)).toEqual(production);
+		const content = viewed[0].message.content;
+		if (!Array.isArray(content)) throw new Error("Expected image-bearing steering content");
+		expect(content).toEqual([
+			{ type: "text", text: expect.stringContaining("Inspect this\nbefore continuing") },
+			image,
+		]);
+		const text = content[0];
+		if (text.type !== "text") throw new Error("Expected steering text before image");
+		expect(text.text.match(/<system-notice>/g)).toHaveLength(1);
+		expect(source.content).toEqual([
+			{ type: "text", text: "Inspect this" },
+			image,
+			{ type: "text", text: "before continuing" },
+		]);
+	});
+
 	it("maps source indices across omitted messages and image-bearing splits", () => {
 		const image = { type: "image" as const, data: "aaaa", mimeType: "image/png" };
 		const messages: AgentMessage[] = [
