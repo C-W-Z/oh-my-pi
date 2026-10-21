@@ -214,9 +214,9 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				let text: string;
 				if (block.type === "toolCall") {
 					try {
-						text = `${block.name}\nCall ID: ${block.id}\n${JSON.stringify(block.arguments, null, 2)}`;
+						text = JSON.stringify(block.arguments, null, 2);
 					} catch {
-						text = `${block.name}\nCall ID: ${block.id}\n[Arguments unavailable]`;
+						text = "[Arguments unavailable]";
 					}
 				} else text = contentText([block]);
 				add(category, {
@@ -230,6 +230,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 					info,
 					text,
 					timestamp: original.timestamp,
+					callId: block.type === "toolCall" ? block.id : undefined,
 					tokens: category === "assistant-thinking" && !thinkingGroup ? reasoningBudget : blockTokens[blockIndex]!,
 					...(category === "assistant-thinking"
 						? {

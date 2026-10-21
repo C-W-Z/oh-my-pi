@@ -943,11 +943,11 @@ describe("ContextViewer presentation", () => {
 		h.render();
 		select(h.viewer, "tool-output");
 		const preview = h.render().join("\n");
-		expect(preview).toContain("Call ID: call-123");
+		expect(preview).toContain("call-123");
 		expect(preview).toContain(expectedTime(undefined));
 		expect(preview).toContain("[read result]");
 		const narrowPreview = h.render(48).join("\n");
-		expect(narrowPreview).toContain("Call ID: call-123");
+		expect(narrowPreview).toContain("call-123");
 		expect(narrowPreview).toContain(
 			new Date(0).toLocaleDateString([], { year: "numeric", month: "2-digit", day: "2-digit" }),
 		);
@@ -957,13 +957,13 @@ describe("ContextViewer presentation", () => {
 		expect(JSON.stringify(nativePreview)).toContain(expectedTime(false));
 		h.viewer.handleInput("\r");
 		const full = h.render().join("\n");
-		expect(full).toContain("Call ID: call-123");
+		expect(full).toContain("call-123");
 		expect(full).toContain(expectedTime(false));
 		const nativeFull = JSON.stringify(h.viewer.describe({ ...cx, hour12: false }));
-		expect(nativeFull).toContain("Call ID: call-123");
+		expect(nativeFull).toContain("call-123");
 		expect(nativeFull).toContain(expectedTime(false));
 		h.viewer.handleInput("\x1b");
-		expect(h.render(48).join("\n")).toContain("Call ID: call-123");
+		expect(h.render(48).join("\n")).toContain("call-123");
 	});
 
 	it("shows estimated wire savings in the overview without a diagnostics navigation level", () => {

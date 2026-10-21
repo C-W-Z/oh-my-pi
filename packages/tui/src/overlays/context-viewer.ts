@@ -347,7 +347,7 @@ export class ContextViewer implements Component {
 				? `${this.#safe(group.label).replace(/\n/g, " ")} · ${this.#tokenEstimate(group)}`
 				: undefined,
 			info || undefined,
-			entry.callId !== undefined ? `Call ID: ${this.#safe(entry.callId)}` : undefined,
+			entry.callId !== undefined ? this.#safe(entry.callId) : undefined,
 			entry.timestamp !== undefined
 				? `${new Date(entry.timestamp).toLocaleString([], {
 						year: "numeric",

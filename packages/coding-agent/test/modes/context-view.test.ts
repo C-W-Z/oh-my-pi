@@ -515,13 +515,14 @@ describe("context snapshot", () => {
 		]);
 		expect(category(data, "assistant-thinking").entries.map(entry => entry.timestamp)).toEqual([10, 10]);
 		expect(category(data, "assistant-messages").entries.map(entry => entry.timestamp)).toEqual([10]);
-		expect(category(data, "tool-calls").entries[0]?.timestamp).toBe(10);
+		const call = category(data, "tool-calls").entries[0]!;
+		expect(call).toMatchObject({ label: "recall", timestamp: 10, callId: "call" });
+		expect(JSON.parse(call.text)).toEqual({ query: "history" });
 		expect(category(data, "tool-output").entries[0]).toMatchObject({
 			label: "recall",
 			timestamp: 12,
 			callId: "call",
 		});
-		expect(category(data, "tool-calls").entries.map(entry => entry.label)).toEqual(["recall"]);
 		expect(category(data, "tool-output").children?.map(group => group.label)).toEqual(["recall"]);
 		expect(category(data, "user-messages").entries.map(entry => [entry.info, entry.text])).toEqual([
 			["custom · interrupted-thinking → developer", "preserved continuity"],
