@@ -14,7 +14,7 @@ import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keyb
 import { getKeybindings } from "../keybindings";
 import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
-import { actionBar, actionButton, selectList } from "../native/overlay";
+import { actionBar, actionButton } from "../native/overlay";
 import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
 import {
@@ -63,6 +63,8 @@ interface OverviewRow {
 	id: ContextPresentationId;
 	label: string;
 	tokens: number | undefined;
+	value?: string;
+	share?: string;
 	child?: boolean;
 	category?: ContextViewCategory;
 }
@@ -197,6 +199,16 @@ export class ContextViewer implements Component {
 			{ key: "buffer", id: "buffer", label: "Auto-Compact Buffer", tokens: data.buffer },
 			{ key: "free", id: "free", label: "Free Space", tokens: data.free },
 		);
+		const tokenWidth = Math.max(
+			...rows.map(item => (item.tokens === undefined ? 1 : formatNumber(item.tokens).length)),
+		);
+		const shareWidth = Math.max(
+			...rows.map(item => (item.tokens === undefined ? 1 : this.#share(item.tokens).length)),
+		);
+		for (const item of rows) {
+			item.value = item.tokens === undefined ? "—" : formatNumber(item.tokens).padStart(tokenWidth);
+			item.share = item.tokens === undefined ? "" : `  ${this.#share(item.tokens).padStart(shareWidth)}`;
+		}
 		this.#overview = new MenuSelection(rows, {
 			getKey: item => item.key,
 			getSearchText: item => item.label,
@@ -327,7 +339,9 @@ export class ContextViewer implements Component {
 	}
 
 	#share(tokens: number): string {
-		return this.#data.window > 0 ? `${((tokens / this.#data.window) * 100).toFixed(1)}%` : "—";
+		if (this.#data.window <= 0) return "—";
+		const percent = (tokens / this.#data.window) * 100;
+		return percent > 0 && percent < 0.05 ? "<0.1%" : `${percent.toFixed(1)}%`;
 	}
 
 	#summary(): string[] {
@@ -348,12 +362,12 @@ export class ContextViewer implements Component {
 		const selected = this.#overview.selectedKey === item.key;
 		const cursor = selected ? theme.fg("accent", theme.nav.cursor) : " ".repeat(visibleWidth(theme.nav.cursor));
 		const prefix = `${cursor} ${item.child ? "  " : ""}${glyph} `;
-		const suffix = item.tokens === undefined ? " —" : ` ${formatNumber(item.tokens)} ${this.#share(item.tokens)}`;
+		const suffix = ` ${theme.fg(selected ? presentation.color : "text", item.value!)}${theme.fg(selected ? presentation.color : "dim", item.share!)}`;
 		const budget = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
 		const label = truncateToWidth(this.#safe(item.label).replace(/\n/g, " "), budget);
 		const name = selected ? theme.fg(presentation.color, theme.bold(label)) : label;
 		return truncateToWidth(
-			`${prefix}${name}${" ".repeat(Math.max(0, budget - visibleWidth(label)))}${theme.fg(selected ? presentation.color : "dim", suffix)}`,
+			`${prefix}${name}${" ".repeat(Math.max(0, budget - visibleWidth(label)))}${suffix}`,
 			width,
 		);
 	}
@@ -645,25 +659,38 @@ export class ContextViewer implements Component {
 							? "□"
 							: "■"
 					: theme.symbol(presentation.symbol);
-				const value =
-					item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`;
-				const label: TspSpan[] = [
-					span(`${item.child ? "  " : ""}${glyph} `, presentation.color),
-					span(this.#safe(item.label), selected ? `${presentation.color} strong` : undefined),
-				];
 				return node(
-					"item",
+					"row",
 					{
-						label,
-						value: selected ? [span(value, presentation.color)] : value,
+						role: "omp.context.cat",
+						align: "center",
+						mark: selected ? "pick" : undefined,
+						actions: item.category ? { click: "select-category", dblclick: "open-category" } : undefined,
 					},
-					undefined,
+					[
+						text([span(glyph, presentation.color)], { role: "omp.context.swatch", wrap: "none" }),
+						text(
+							[
+								span(
+									`${item.child ? "  " : ""}${this.#safe(item.label)}`,
+									selected ? `${presentation.color} strong` : undefined,
+								),
+							],
+							{ role: "omp.context.label", grow: 1, wrap: "none", truncate: "end" },
+						),
+						text([span(item.value!.trim(), selected ? presentation.color : undefined)], {
+							role: "omp.context.tokens",
+							wrap: "none",
+						}),
+						text([span(item.share!.trim(), selected ? presentation.color : undefined)], {
+							role: "omp.context.share",
+							wrap: "none",
+						}),
+					],
 					item.key,
 				);
 			});
-			const list = meter
-				? node("list", { selected: this.#overview.selectedKey, grow: 1 }, items, "categories")
-				: selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
+			const list = node("col", { grow: 1 }, items, "categories");
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
@@ -767,17 +794,19 @@ export class ContextViewer implements Component {
 		if (event.type === "action") {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
-			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
+			else if (this.#state === "overview" && (event.act === "select-category" || event.act === "open-category")) {
+				const item = this.#overview.items.find(
+					item => event.key === `categories/${item.key}` || event.key.endsWith(`/categories/${item.key}`),
+				);
+				if (!item?.category) return;
+				this.#overview.setSelectedKey(item.key);
+				if (event.act === "open-category") this.#activate();
+			} else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
 				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
 				if (!entry) return;
 				this.#entries.setSelectedKey(entry.id);
 				if (event.act === "open-entry") this.#activate();
 			}
-		} else if (this.#state === "overview" && (event.type === "select" || event.type === "activate")) {
-			const item = this.#overview.items.find(item => item.key === event.item);
-			if (!item?.category) return;
-			this.#overview.setSelectedKey(event.item);
-			if (event.type === "activate") this.#activate();
 		}
 		this.#requestRender();
 	}
