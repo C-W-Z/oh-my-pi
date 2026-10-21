@@ -12,7 +12,7 @@ import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
 import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
 import { getKeybindings } from "../keybindings";
-import { col, node, row, span, text } from "../native/describe";
+import { col, item, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
 import { actionBar, actionButton, selectList } from "../native/overlay";
 import { styledSpans } from "../native/spans";
@@ -705,31 +705,28 @@ export class ContextViewer implements Component {
 		const children: NativeNode[] = [];
 		if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
 		if (this.#state === "overview") {
-			const items = this.#overview.items.map(item => {
-				const presentation = CONTEXT_PRESENTATION[item.id];
-				const selected = this.#overview.selectedKey === item.key;
+			const items = this.#overview.items.map(overviewRow => {
+				const presentation = CONTEXT_PRESENTATION[overviewRow.id];
+				const selected = this.#overview.selectedKey === overviewRow.key;
 				const glyph = meter
-					? item.id === "buffer"
+					? overviewRow.id === "buffer"
 						? "▨"
-						: item.id === "free"
+						: overviewRow.id === "free"
 							? "□"
 							: "■"
 					: theme.symbol(presentation.symbol);
 				const value =
-					item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`;
+					overviewRow.tokens === undefined
+						? "—"
+						: `${formatNumber(overviewRow.tokens)} · ${this.#share(overviewRow.tokens)}`;
 				const label: TspSpan[] = [
-					span(`${item.child ? "  " : ""}${glyph} `, presentation.color),
-					span(this.#safe(item.label), selected ? `${presentation.color} strong` : undefined),
+					span(`${overviewRow.child ? "  " : ""}${glyph} `, presentation.color),
+					span(this.#safe(overviewRow.label), selected ? `${presentation.color} strong` : undefined),
 				];
-				return node(
-					"item",
-					{
-						label,
-						value: selected ? [span(value, presentation.color)] : value,
-					},
-					undefined,
-					item.key,
-				);
+				return item(overviewRow.key, {
+					label,
+					value: selected ? [span(value, presentation.color)] : value,
+				});
 			});
 			const list = selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
