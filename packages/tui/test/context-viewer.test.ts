@@ -11,7 +11,12 @@ import {
 import type { NativeNode } from "../src/native/node";
 import { TspDocument } from "../src/native/apply";
 import { Reconciler } from "../src/native/reconcile";
-import { ContextViewer, type ContextViewData, type ContextViewCategory } from "../src/overlays/context-viewer";
+import {
+	ContextViewer,
+	type ContextThinkingGroup,
+	type ContextViewData,
+	type ContextViewCategory,
+} from "../src/overlays/context-viewer";
 import { createTheme, getBuiltinThemes } from "../src/theme/loader";
 import { ensureThemeSync, setThemeInstance, theme, type Theme } from "../src/theme/theme";
 import { CONTEXT_PRESENTATION } from "../src/chrome/context-presentation";
@@ -153,6 +158,12 @@ function select(viewer: ContextViewer, key: string, activate = true): void {
 		act: activate ? "open-category" : "select-category",
 		mods: [],
 	});
+}
+
+function nativeText(root: NativeNode): string {
+	return nodes(root)
+		.flatMap(node => (node.k === "text" ? [textValue(node.p?.spans) ?? node.p?.text ?? ""] : []))
+		.join("\n");
 }
 
 function selected(root: NativeNode): string | null | undefined {
@@ -505,6 +516,109 @@ describe("ContextViewer preview boundaries", () => {
 		expect(h.render(48).join("\n")).toContain("single-line-tail");
 		h.viewer.handleInput("\x1b");
 		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
+	});
+});
+
+describe("ContextViewer reasoning estimates", () => {
+	it("shows a shared replay total once before unknown children and preserves it when opening either child", () => {
+		const data = fixture();
+		const group: ContextThinkingGroup = {
+			id: "thinking-group",
+			label: "Assistant thinking · turn 1",
+			tokens: 1250,
+		};
+		const categories: ContextViewCategory[] = [
+			{
+				id: "assistant-thinking",
+				label: "Assistant Thinking",
+				tokens: 1275,
+				entries: [
+					...["first", "second"].map(id => ({
+						id,
+						label: `${id} block`,
+						tokens: 0,
+						tokenStatus: "shared" as const,
+						thinkingGroup: group,
+						text: `${id} thinking body`,
+					})),
+					{ id: "ordinary", label: "ordinary block", tokens: 25, text: "ordinary body" },
+				],
+			},
+		];
+		const h = harness({ ...data, categories });
+		h.resize(32);
+		try {
+			h.render(160);
+			select(h.viewer, "assistant-thinking");
+			for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+				expect(preview.match(/1,250 tokens/g)).toHaveLength(1);
+				expect(preview.indexOf(group.label)).toBeLessThan(preview.indexOf("[first block]"));
+				expect(preview).toContain("  [first block] —");
+				expect(preview).toContain("  [second block] —");
+				expect(preview).toContain("[ordinary block] 25 tokens");
+				expect(preview).not.toContain("] 0 tokens");
+				expect(preview).not.toContain("unavailable");
+			}
+			for (const id of ["first", "second"]) {
+				h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+				for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+					expect(detail).toContain(`[${id} block] —`);
+					expect(detail).toContain(`${group.label} · 1,250 tokens`);
+					expect(detail).toContain(`${id} thinking body`);
+				}
+				h.viewer.handleInput("\x1b");
+			}
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
+	it("renders interrupted single and grouped estimates as unavailable rather than zero tokens", () => {
+		const data = fixture();
+		const group: ContextThinkingGroup = {
+			id: "interrupted-group",
+			label: "Interrupted thinking turn",
+			tokens: 0,
+			tokenStatus: "interrupted",
+		};
+		data.categories[0]!.entries = [
+			{
+				id: "interrupted-single",
+				label: "interrupted single",
+				tokens: 0,
+				tokenStatus: "interrupted",
+				text: "[interrupted]",
+			},
+			...["first", "second"].map(id => ({
+				id,
+				label: `${id} interrupted block`,
+				tokens: 0,
+				tokenStatus: "shared" as const,
+				thinkingGroup: group,
+				text: "[interrupted]",
+			})),
+		];
+		const h = harness(data);
+		h.resize(32);
+		try {
+			h.render(160);
+			select(h.viewer, "system-prompt");
+			for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+				expect(preview).toContain("[interrupted single] N/A · Interrupted");
+				expect(preview).toContain(`${group.label} · N/A · Interrupted`);
+				expect(preview).not.toContain("0 tokens");
+			}
+			for (const id of ["interrupted-single", "second"]) {
+				h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+				for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+					expect(detail).toContain("N/A · Interrupted");
+					expect(detail).not.toContain("0 tokens");
+				}
+				h.viewer.handleInput("\x1b");
+			}
+		} finally {
+			h.viewer.dispose();
+		}
 	});
 });
 

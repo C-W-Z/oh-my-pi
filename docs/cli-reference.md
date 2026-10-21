@@ -78,11 +78,16 @@ Skills is a separate, estimate-only row; its estimate excludes hidden or
 unavailable skills and is subtracted from the System Prompt estimate to avoid
 double-counting.
 
-Thinking estimates include replayable provider reasoning. Retained Anthropic
-web-search and tool-search calls and their results appear in Tool Calls and Tool
-Output, with readable arguments and metadata. Encoded payloads, signatures, and
-other hard-to-read replay fields are omitted for readability; this does not
-change token estimates.
+Thinking counts use the session tokenizer's estimates. Multiple thinking blocks
+in one message share a total shown on the message heading; individual blocks
+show `—` when no separate count is available. A single block shows its count
+directly. Empty interrupted thinking without usage shows `N/A · Interrupted`,
+not a measured zero.
+
+Retained Anthropic web-search and tool-search calls and their results appear in
+Tool Calls and Tool Output, with readable arguments and metadata. Encoded
+payloads, signatures, and other hard-to-read replay fields are omitted for
+readability; this does not change token estimates.
 
 Use the configured `tui.select.up` / `tui.select.down` keys to select and scroll,
 `tui.select.confirm` to open an entry, and `tui.select.cancel` to go back or

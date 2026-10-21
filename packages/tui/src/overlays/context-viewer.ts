@@ -28,12 +28,21 @@ import { ensureThemeSync, theme } from "../theme/theme";
 import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
 
+export interface ContextThinkingGroup {
+	readonly id: string;
+	readonly label: string;
+	readonly tokens: number;
+	readonly tokenStatus?: "interrupted";
+}
+
 export interface ContextViewEntry {
 	readonly id: string;
 	readonly label: string;
 	readonly text: string;
-	/** Unscaled content/replay estimate; encoded thinking may cost more than its visible placeholder. */
+	/** Aggregation weight for the unscaled replay estimate; shared blocks contribute through their group. */
 	readonly tokens: number;
+	readonly tokenStatus?: "shared" | "interrupted";
+	readonly thinkingGroup?: ContextThinkingGroup;
 	readonly path?: string;
 	readonly info?: string;
 	readonly timestamp?: number;
@@ -317,8 +326,26 @@ export class ContextViewer implements Component {
 	#entryInfo(entry: ContextViewEntry): string {
 		return this.#safe([entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "));
 	}
-	#entryMetadata(entry: ContextViewEntry): string[] {
+	#tokenEstimate(tokens: number, status?: "shared" | "interrupted"): string {
+		if (status === "shared") return "—";
+		if (status === "interrupted") return "N/A · Interrupted";
+		return `${tokens.toLocaleString("en-US")} tokens`;
+	}
+
+	#groupHeaderLine(group: ContextThinkingGroup): string {
+		const color = CONTEXT_PRESENTATION[this.#category!.id].color;
+		return (
+			theme.fg(color, theme.bold(this.#safe(group.label).replace(/\n/g, " "))) +
+			theme.fg("dim", ` · ${this.#tokenEstimate(group.tokens, group.tokenStatus)}`)
+		);
+	}
+
+	#entryMetadata(entry: ContextViewEntry, preview = false): string[] {
+		const group = entry.thinkingGroup;
 		return [
+			group && !preview
+				? `${this.#safe(group.label).replace(/\n/g, " ")} · ${this.#tokenEstimate(group.tokens, group.tokenStatus)}`
+				: undefined,
 			this.#entryInfo(entry) || undefined,
 			entry.callId !== undefined ? `Call ID: ${this.#safe(entry.callId)}` : undefined,
 			entry.timestamp !== undefined
@@ -339,7 +366,7 @@ export class ContextViewer implements Component {
 		return [
 			span("[", "dim"),
 			span(this.#entryLabel(entry), `${color} strong`),
-			span(`] ${entry.tokens.toLocaleString("en-US")} tokens`, "dim"),
+			span(`] ${this.#tokenEstimate(entry.tokens, entry.tokenStatus)}`, "dim"),
 		];
 	}
 
@@ -348,7 +375,7 @@ export class ContextViewer implements Component {
 		return (
 			theme.fg("dim", "[") +
 			theme.fg(color, theme.bold(this.#entryLabel(entry))) +
-			theme.fg("dim", `] ${entry.tokens.toLocaleString("en-US")} tokens`)
+			theme.fg("dim", `] ${this.#tokenEstimate(entry.tokens, entry.tokenStatus)}`)
 		);
 	}
 
@@ -477,17 +504,25 @@ export class ContextViewer implements Component {
 		if (cached?.category === category && cached.width === width && cached.height === height) return;
 		const lines: string[] = [];
 		const ranges: EntryRange[] = [];
+		const groups = new Set<string>();
 		for (const entry of category.entries) {
 			const start = lines.length;
-			lines.push(truncateToWidth(this.#entryHeaderLine(entry), width - 1));
+			const group = entry.thinkingGroup;
+			const indent = group ? "  " : "";
+			if (group && !groups.has(group.id)) {
+				groups.add(group.id);
+				lines.push(truncateToWidth(this.#groupHeaderLine(group), Math.max(1, width - 1)));
+			}
+			const entryWidth = Math.max(1, width - 1 - indent.length);
+			lines.push(`${indent}${truncateToWidth(this.#entryHeaderLine(entry), entryWidth)}`);
 			lines.push(
-				...this.#entryMetadata(entry).flatMap(line =>
-					wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width - 1)),
+				...this.#entryMetadata(entry, true).flatMap(line =>
+					wrapTextWithAnsi(theme.fg("dim", line), entryWidth).map(line => `${indent}${line}`),
 				),
 			);
 			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
-			const content = this.#entryPreview(entry, Math.max(1, width - 3), budget);
-			lines.push(...content.lines.map(line => `  ${line}`));
+			const content = this.#entryPreview(entry, Math.max(1, width - 3 - indent.length), budget);
+			lines.push(...content.lines.map(line => `${indent}  ${line}`));
 			if (!content.complete) lines.push(this.#truncationMarker(false));
 			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");

@@ -3,7 +3,12 @@ import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { isSurvivingAssistant } from "@oh-my-pi/pi-ai/providers/transform-messages";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import type { ContextCategoryId } from "@oh-my-pi/pi-tui/chrome/context-presentation";
-import type { ContextViewCategory, ContextViewData, ContextViewEntry } from "@oh-my-pi/pi-tui/overlays/context-viewer";
+import type {
+	ContextThinkingGroup,
+	ContextViewCategory,
+	ContextViewData,
+	ContextViewEntry,
+} from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
@@ -154,19 +159,27 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				convertedIndex === latestAssistantIndex
 					? tokenizer.countLatestTurn(message)
 					: tokenizer.countMessage(message);
-			let reasoningBudget = Math.max(0, messageTokens - blockTokens.reduce((sum, tokens) => sum + tokens, 0));
-			for (const [position, index] of reasoningIndexes.entries()) {
-				const block = message.content[index]!;
-				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
-				const tokens =
-					position === reasoningIndexes.length - 1
-						? reasoningBudget
-						: Math.min(reasoningBudget, tokenizer.countMessages([isolated]));
-				blockTokens[index] = tokens;
-				reasoningBudget -= tokens;
-			}
-			// Preserve the tokenizer's replay budget when no explicit thinking block carries it; never read or display the raw payload.
-			if (reasoningBudget > 0) {
+			const reasoningBudget = Math.max(0, messageTokens - blockTokens.reduce((sum, tokens) => sum + tokens, 0));
+			const interrupted =
+				message.stopReason === "aborted" &&
+				reasoningBudget === 0 &&
+				message.usage.output === 0 &&
+				message.usage.reasoningTokens === undefined &&
+				!message.providerPayload &&
+				message.content.every(block => block.type === "thinking" && !block.thinking.trim());
+			const thinkingGroup: ContextThinkingGroup | undefined =
+				reasoningIndexes.length > 1
+					? {
+							id: `assistant-thinking/${prefix}`,
+							label: `Message ${messageIndex + 1}`,
+							tokens: reasoningBudget,
+							tokenStatus: interrupted ? "interrupted" : undefined,
+						}
+					: undefined;
+			if (thinkingGroup) byId.get("assistant-thinking")!.tokens += reasoningBudget;
+			else if (reasoningIndexes.length === 1) blockTokens[reasoningIndexes[0]!] = reasoningBudget;
+			// Payload-only reasoning still carries a message-level estimate, without exposing its bytes.
+			if (reasoningBudget > 0 && reasoningIndexes.length === 0) {
 				add("assistant-thinking", {
 					id: `assistant-thinking/${prefix}/payload`,
 					label: `Thinking 1/1 · message ${messageIndex + 1}`,
@@ -227,6 +240,16 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 					text,
 					timestamp: original.timestamp,
 					tokens: blockTokens[blockIndex]!,
+					...(category === "assistant-thinking"
+						? {
+								thinkingGroup,
+								tokenStatus: interrupted
+									? ("interrupted" as const)
+									: thinkingGroup
+										? ("shared" as const)
+										: undefined,
+							}
+						: {}),
 				});
 			}
 		} else if (message.role === "toolResult" || execution) {

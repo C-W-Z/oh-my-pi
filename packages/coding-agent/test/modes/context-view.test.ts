@@ -412,6 +412,65 @@ describe("context snapshot", () => {
 		expect(totalTokens(filtered)).toBe(session.agent.tokenizer.countTokens(text));
 	});
 
+	it("keeps the tokenizer's thinking budget at message scope without assigning it to individual blocks", () => {
+		const reader = getBundledModel<"openai-codex-responses">("openai-codex", "gpt-6.1-sol")!;
+		const summary = "A visible summary of the second reasoning item.";
+		const message: AssistantMessage = {
+			...reply([
+				{ type: "thinking", thinking: "" },
+				{ type: "thinking", thinking: summary },
+				{ type: "text", text: "Answer" },
+			]),
+			api: reader.api,
+			provider: reader.provider,
+			model: reader.id,
+			stopReason: "stop",
+			providerPayload: {
+				type: "openaiResponsesHistory",
+				provider: reader.provider,
+				dt: true,
+				items: [
+					{ type: "reasoning", id: "rs_first", summary: [], encrypted_content: "private-first" },
+					{
+						type: "reasoning",
+						id: "rs_second",
+						summary: [{ type: "summary_text", text: summary }],
+						encrypted_content: "private-second",
+					},
+					{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Answer" }] },
+				],
+			},
+			usage: { ...reply([]).usage, output: 1033, reasoningTokens: 846 },
+		};
+		const session = sessionWith({ model: reader, prompt: [], messages: [message] });
+		const data = buildSessionContextView(session);
+		const thinking = category(data, "assistant-thinking");
+		const messageTokens = session.agent.tokenizer.countMessage(message);
+		const reasoningBudget = messageTokens - session.agent.tokenizer.countTokens("Answer");
+		expect(thinking.tokens).toBe(reasoningBudget);
+		expect(thinking.entries.map(entry => entry.tokenStatus)).toEqual(["shared", "shared"]);
+		expect(thinking.entries.map(entry => entry.thinkingGroup?.tokens)).toEqual([reasoningBudget, reasoningBudget]);
+		expect(thinking.entries.map(entry => entry.tokens)).toEqual([0, 0]);
+		expect(totalTokens(data)).toBe(messageTokens);
+		expect(JSON.stringify(data)).not.toMatch(/private-first|private-second|rs_first|rs_second/);
+
+		session.agent.setModel(getBundledModel("openai-codex", "gpt-6-sol")!);
+		const demoted = buildSessionContextView(session);
+		expect(category(demoted, "assistant-thinking").tokens).toBe(session.agent.tokenizer.countTokens(summary));
+	});
+
+	it("distinguishes interrupted empty thinking from a measured zero", () => {
+		const message: AssistantMessage = {
+			...reply([{ type: "thinking", thinking: "" }]),
+			stopReason: "aborted",
+			usage: { ...reply([]).usage, output: 0, totalTokens: 0 },
+		};
+		const data = buildSessionContextView(sessionWith({ prompt: [], messages: [message] }));
+		const thinking = category(data, "assistant-thinking");
+		expect(thinking.tokens).toBe(0);
+		expect(thinking.entries[0]?.tokenStatus).toBe("interrupted");
+	});
+
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {
 		const assistant = {
 			...reply([
