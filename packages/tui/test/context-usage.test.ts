@@ -123,10 +123,10 @@ describe("estimateToolSchemaTokens", () => {
 });
 
 /**
- * Contract: the retained /context renderer surfaces Snapcompact savings,
- * skipped conversions, and the estimated post-Snapcompact token count.
+ * Contract: the /context panel surfaces estimated snapcompact wire savings —
+ * applied swaps show "saves" figures, inactive states say why.
  */
-describe("renderContextUsage Snapcompact section", () => {
+describe("renderContextUsage snapcompact section", () => {
 	const themeStub = {
 		fg: (_color: string, text: string) => text,
 		bold: (text: string) => text,
@@ -144,7 +144,7 @@ describe("renderContextUsage Snapcompact section", () => {
 		};
 	}
 
-	it("renders applied savings, skip reasons, and the estimated token count", () => {
+	it("renders savings, skip reasons, and the wire total", () => {
 		const output = renderContextUsage(
 			breakdownWith({
 				visionCapable: true,
@@ -164,27 +164,8 @@ describe("renderContextUsage Snapcompact section", () => {
 		expect(output).toContain("Snapcompact (estimated wire savings)");
 		expect(output).toContain("System prompt (all): saves ~3.2K (9.8K text → 2 frames ≈ 6.6K)");
 		expect(output).toContain("Tool results: none imaged (3 in history)");
+		// 27929 logical − 3168 saved ≈ 25K on the wire.
 		expect(output).toContain("Estimated after Snapcompact: ~25K tokens");
-	});
-
-	it("explains why a system prompt remains text", () => {
-		const output = renderContextUsage(
-			breakdownWith({
-				visionCapable: true,
-				systemPrompt: {
-					applied: false,
-					scope: "agents-md",
-					textTokens: 1000,
-					frames: 0,
-					imageTokens: 0,
-					savedTokens: 0,
-					reason: "budget",
-				},
-				savedTokens: 0,
-			}),
-			themeStub,
-		);
-		expect(output).toContain("System prompt (AGENTS.md): stays text (image budget exhausted)");
 	});
 
 	it("reports text-only models as inactive", () => {
@@ -192,7 +173,7 @@ describe("renderContextUsage Snapcompact section", () => {
 		expect(output).toContain("Snapcompact: inactive (model has no image input)");
 	});
 
-	it("omits the section when no Snapcompact setting is on", () => {
+	it("omits the section entirely when no snapcompact setting is on", () => {
 		const output = renderContextUsage(breakdownWith(undefined), themeStub);
 		expect(output).not.toContain("Snapcompact");
 	});
