@@ -731,9 +731,7 @@ export class ContextViewer implements Component {
 					item.key,
 				);
 			});
-			const list = meter
-				? node("list", { selected: this.#overview.selectedKey, grow: 1 }, items, "categories")
-				: selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
+			const list = selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
