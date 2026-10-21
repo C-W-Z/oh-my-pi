@@ -14,7 +14,7 @@ const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["skills", "Skills"],
 	["built-in-tools", "Built-in Tools"],
 	["custom-tools", "Custom Tools"],
-	["user-messages", "User Messages"],
+	["user-messages", "User / Developer Messages"],
 	["assistant-messages", "Assistant Messages"],
 	["assistant-thinking", "Assistant Thinking"],
 	["tool-calls", "Tool Calls"],

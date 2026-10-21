@@ -129,7 +129,7 @@ function fixture(): ContextViewData {
 			{ id: "custom-tools", label: "Custom Tools", tokens: 0, entries: [] },
 			{
 				id: "user-messages",
-				label: "User Messages",
+				label: "User / Developer Messages",
 				tokens: 10000,
 				entries: [{ id: "user/0", label: "user", tokens: 10000, text: "question" }],
 			},
