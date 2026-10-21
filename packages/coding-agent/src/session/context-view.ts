@@ -80,6 +80,8 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 	const skills = byId.get("skills")!;
 	skills.tokens = breakdown.categories.find(category => category.id === "skills")!.tokens;
 	const systemPrompt = byId.get("system-prompt")!;
+	// Skills estimates the prompt's skill listing, not full skill files or additional context.
+	// Subtract it only from the category weight; entries retain complete blocks and unscaled estimates.
 	systemPrompt.tokens = Math.max(0, systemPrompt.tokens - skills.tokens);
 
 	const infos = new Map(session.getAllToolInfos().map(info => [info.name, info.sourceInfo]));

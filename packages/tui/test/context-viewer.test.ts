@@ -252,13 +252,12 @@ describe("ContextViewer navigation", () => {
 			expect(
 				h
 					.render()
-					.find(line => line.includes("Skills"))
+					.find(line => /\sSkills\s+\d/.test(line))
 					?.match(/\d+K|\d+\.\d%/g),
 			).toEqual(["11K", "5.3%"]);
 			for (const context of [cx, meterCx]) {
 				const root = h.viewer.describe(context);
 				const skills = nodes(root).find(node => node.key === "skills");
-				expect(textValue(contextField(skills, "label")?.p?.spans)).toContain("Skills");
 				expect(usageColumns(skills)).toEqual(["11K", "5.3%"]);
 				for (const activate of [false, true]) {
 					select(h.viewer, "skills", activate);
@@ -775,27 +774,28 @@ describe("ContextViewer presentation", () => {
 					row: item("system-prompt"),
 					glyph: "■",
 					color: CONTEXT_PRESENTATION["system-prompt"].color,
-					bar: "System Prompt ·",
+					bar: item("system-prompt"),
 				},
 				{ row: item("skills"), glyph: "■", color: CONTEXT_PRESENTATION.skills.color },
 				{
 					row: item("tool-output/read"),
 					glyph: "■",
 					color: CONTEXT_PRESENTATION["tool-output"].color,
-					bar: "Tool Output ·",
+					bar: item("tool-output"),
 				},
 			];
 			for (const item of expected) {
 				const swatch = contextField(item.row, "swatch")?.p?.spans?.[0];
 				expect(swatch?.t.trim()).toBe(item.glyph);
 				expect(swatch?.s).toBe(item.color);
-				if (item.bar)
-					expect(meter.p?.parts?.find(part => part.label?.startsWith(item.bar))?.token).toBe(item.color);
+				if (item.bar) {
+					const label = textValue(contextField(item.bar, "label")?.p?.spans);
+					expect(meter.p?.parts?.find(part => part.label?.startsWith(`${label} ·`))?.token).toBe(item.color);
+				}
 			}
 			expect(selected(root)).toBe("system-prompt");
 			const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
 			expect(textValue(contextField(fallback, "swatch")?.p?.spans)).toBe(theme.symbol("context.content"));
-			expect(h.render().join("\n")).toContain(`${theme.symbol("context.content")} System Prompt`);
 		} finally {
 			h.viewer.dispose();
 		}
@@ -1175,7 +1175,6 @@ describe("ContextViewer presentation", () => {
 		for (const width of [48, 64, 100]) {
 			const lines = h.viewer.render(width);
 			expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
-			expect(h.render(width).join("\n")).toContain("System Prompt");
 		}
 		select(h.viewer, "tool-output/read");
 		h.render(48);

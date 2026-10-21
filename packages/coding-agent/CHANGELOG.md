@@ -8,6 +8,11 @@
 - Added on-demand context snapshots with source attribution across omitted and split messages, canonical tool names, and replay-aware thinking estimates without changing production conversion caches ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Context snapshots retain each displayed message's originating timestamp for localized date-and-time display and correlate Tool Output with its call ID ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 
+### Changed
+
+- `/context` labels the system-prompt category "System Prompt (excluding Skills)"; Skills estimates the prompt's skill listing, not additional context or full skill files ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- `/context` Overview attributes current usage proportionally across category estimates, while entries retain unscaled content/replay estimates; System Blocks include the skill listing attributed separately to Skills, so entry sums need not match Overview values ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+
 ### Fixed
 
 - `/context` includes retained reasoning in the latest Anthropic assistant turn's thinking estimate, including turns with abandoned tool calls.

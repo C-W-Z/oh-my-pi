@@ -32,6 +32,7 @@ export interface ContextViewEntry {
 	readonly id: string;
 	readonly label: string;
 	readonly text: string;
+	/** Unscaled content/replay estimate; encoded thinking may cost more than its visible placeholder. */
 	readonly tokens: number;
 	readonly path?: string;
 	readonly info?: string;
@@ -43,6 +44,7 @@ export interface ContextViewCategory {
 	id: ContextCategoryId;
 	key?: string;
 	label: string;
+	/** Overview attribution weight, not reported usage; may differ from the entry sum (e.g. Skills subtraction). */
 	tokens: number;
 	entries: ContextViewEntry[];
 	children?: ContextViewCategory[];
@@ -51,6 +53,7 @@ export interface ContextViewCategory {
 export interface ContextViewData {
 	readonly modelLabel: string;
 	readonly window: number;
+	/** Current context usage, which may be provider-anchored or locally estimated. */
 	readonly usage: number;
 	readonly buffer: number;
 	readonly free: number;
@@ -139,6 +142,8 @@ export class ContextViewer implements Component {
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
 		this.#getRows = options.getRows;
+		// Overview attributes current usage proportionally; entries keep their unscaled content/replay estimates.
+		// This also applies to child categories, so Overview values need not equal entry sums.
 		const allocated = allocateTokens(
 			data.categories.map(category => category.tokens),
 			data.usage,
@@ -158,6 +163,9 @@ export class ContextViewer implements Component {
 			}
 		};
 		if (allocated) allocate(data.categories, allocated);
+		// Only Overview excludes the Skills attribution; content views retain complete system blocks.
+		const overviewLabel = (category: ContextViewCategory): string =>
+			category.id === "system-prompt" ? `${category.label} (excluding Skills)` : category.label;
 		if (this.#allocationAvailable && data.window > 0 && Number.isFinite(data.window)) {
 			this.#meter = describeContextMeter({
 				contextWindow: data.window,
@@ -166,7 +174,7 @@ export class ContextViewer implements Component {
 				autoCompactBufferTokens: data.buffer,
 				thresholdTokens: data.breakdown.thresholdTokens,
 				categories: data.categories.map(category => ({
-					label: this.#safe(category.label),
+					label: this.#safe(overviewLabel(category)),
 					tokens: this.#allocated.get(category)!,
 					color: CONTEXT_PRESENTATION[category.id].color,
 				})),
@@ -177,7 +185,7 @@ export class ContextViewer implements Component {
 			rows.push({
 				key: category.id,
 				id: category.id,
-				label: category.label,
+				label: overviewLabel(category),
 				tokens: this.#allocated.get(category),
 				category: category.id === "skills" ? undefined : category,
 			});
