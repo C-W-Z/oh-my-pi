@@ -292,7 +292,7 @@ describe("context snapshot", () => {
 		expect(JSON.stringify(updated)).not.toContain("private-signature");
 	});
 
-	it("groups retained server-tool calls and results without exposing encrypted replay fields", () => {
+	it("groups retained server-tool calls and results while preserving every field for inspection", () => {
 		const message = reply([
 			{
 				type: "anthropicServerTool",
@@ -350,11 +350,16 @@ describe("context snapshot", () => {
 			{ type: "tool_reference", tool_name: "read_file" },
 		]);
 		expect(JSON.parse(results.entries[1]!.text).content).toEqual([
-			{ type: "web_search_result", title: "Release notes", url: "https://example.org/releases" },
+			{
+				type: "web_search_result",
+				title: "Release notes",
+				url: "https://example.org/releases",
+				encrypted_content: "private-ciphertext",
+				signature: "private-signature",
+			},
 		]);
 		expect(category(data, "assistant-messages").entries).toEqual([]);
 		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
-		expect(JSON.stringify(data)).not.toMatch(/private-ciphertext|private-signature/);
 		expect(message).toEqual(before);
 	});
 

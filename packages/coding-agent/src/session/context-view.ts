@@ -48,16 +48,10 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
-/** Format retained server-tool metadata, omitting known unreadable replay fields for readability. */
+/** Format retained server-tool metadata without filtering provider fields. */
 function serverToolText(block: unknown): string {
 	try {
-		return (
-			JSON.stringify(
-				block,
-				(key, value: unknown) => (key === "encrypted_content" || key === "signature" ? undefined : value),
-				2,
-			) ?? ""
-		);
+		return JSON.stringify(block, null, 2) ?? "";
 	} catch {
 		return "[Content unavailable]";
 	}
