@@ -90,7 +90,9 @@ function allocateTokens(weights: readonly number[], total: number): number[] | u
 
 /** Read-only snapshot navigation with shared state for keyboard and native interactions. */
 export class ContextViewer implements Component {
-	readonly nativeOverlay: NonNullable<Component["nativeOverlay"]>;
+	#nativeOverlay:
+		| { category: ContextViewCategory | undefined; props: NonNullable<Component["nativeOverlay"]> }
+		| undefined;
 	readonly #data: ContextViewData;
 	readonly #close: () => void;
 	readonly #requestRender: () => void;
@@ -133,12 +135,6 @@ export class ContextViewer implements Component {
 		options: { onClose: () => void; requestRender: () => void; getRows: () => number },
 	) {
 		ensureThemeSync();
-		this.nativeOverlay = {
-			role: "omp.overlay.report",
-			size: "lg",
-			anchor: "center",
-			head: contextUsageHead(data.breakdown),
-		};
 		this.#data = data;
 		this.#close = options.onClose;
 		this.#requestRender = options.requestRender;
@@ -237,6 +233,24 @@ export class ContextViewer implements Component {
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
 		this.#panel.dispose();
+	}
+
+	get nativeOverlay(): NonNullable<Component["nativeOverlay"]> {
+		const category = this.#state === "overview" ? undefined : this.#category;
+		if (!this.#nativeOverlay || this.#nativeOverlay.category !== category) {
+			this.#nativeOverlay = {
+				category,
+				props: {
+					role: "omp.overlay.report",
+					size: "lg",
+					anchor: "center",
+					head: category
+						? [span("Context", "strong"), span(` · ${this.#safe(category.label)}`, "muted")]
+						: contextUsageHead(this.#data.breakdown),
+				},
+			};
+		}
+		return this.#nativeOverlay.props;
 	}
 
 	#safe(value: string): string {
@@ -646,8 +660,7 @@ export class ContextViewer implements Component {
 		this.#layout();
 		const meter = this.#state === "overview" && cx.supports("meter") ? this.#meter : undefined;
 		const children: NativeNode[] = [];
-		if (this.#state === "category") children.push(text([span(this.#safe(this.#category!.label), "strong")]));
-		else if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
+		if (this.#state === "entry") children.push(text(this.#entryHeader(this.#entry!)));
 		if (this.#state === "overview") {
 			const items = this.#overview.items.map(item => {
 				const presentation = CONTEXT_PRESENTATION[item.id];

@@ -16,6 +16,7 @@
 ### Fixed
 
 - `/context` shows token counts and usage percentages in separate aligned columns, uses Tern's normal token contrast without bold, preserves category colors when selected, and shows tiny nonzero usage as `<0.1%`.
+- Tern `/context` category and content pages show the active category in the title without repeating it above the content; the overview title shows the model and non-Tern terminals keep their existing headings.
 - Context Viewer truncation hints show the configured confirm key and omit the action when that keybinding is disabled.
 - Empty Context Viewer categories omit the inactive open hint; unavailable context-window warnings identify the missing capacity, and Snapcompact totals are labeled as estimates rather than the next request's size.
 - Native `/context` shows usage and compaction totals even without meter support or category token weights.

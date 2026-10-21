@@ -47,9 +47,7 @@ function contextField(row: NativeNode | undefined, field: string): Extract<Nativ
 
 function usageColumns(row: NativeNode | undefined): string[] | undefined {
 	if (!row) return;
-	return ["tokens", "share"]
-		.map(field => textValue(contextField(row, field)?.p?.spans)?.trim() ?? "")
-		.filter(Boolean);
+	return ["tokens", "share"].map(field => textValue(contextField(row, field)?.p?.spans)?.trim() ?? "").filter(Boolean);
 }
 
 function fixture(): ContextViewData {
@@ -251,7 +249,12 @@ describe("ContextViewer navigation", () => {
 	it("keeps Skills token totals visible while native and keyboard navigation cannot focus or open them", () => {
 		const h = harness();
 		try {
-			expect(h.render().find(line => line.includes("Skills"))?.match(/\d+K|\d+\.\d%/g)).toEqual(["11K", "5.3%"]);
+			expect(
+				h
+					.render()
+					.find(line => line.includes("Skills"))
+					?.match(/\d+K|\d+\.\d%/g),
+			).toEqual(["11K", "5.3%"]);
 			for (const context of [cx, meterCx]) {
 				const root = h.viewer.describe(context);
 				const skills = nodes(root).find(node => node.key === "skills");
@@ -547,6 +550,59 @@ describe("ContextViewer preview boundaries", () => {
 });
 
 describe("ContextViewer presentation", () => {
+	it("moves the active category into the native sheet title through open and back transitions only", () => {
+		const data = fixture();
+		const system = data.categories[0]!;
+		system.entries.push({ id: "system/1", label: "second system block", tokens: 100, text: "second source" });
+		const h = harness(data);
+		const overviewHead = textValue(h.viewer.nativeOverlay.head);
+		const checkCategory = (category: ContextViewCategory): NativeNode => {
+			const root = h.viewer.describe(cx);
+			expect(textValue(h.viewer.nativeOverlay.head)).toContain(category.label);
+			expect(textValue(h.viewer.nativeOverlay.head)).not.toBe(overviewHead);
+			expect(
+				root.c?.some(child => "k" in child && child.k === "text" && textValue(child.p?.spans) === category.label),
+			).toBe(false);
+			expect(h.render()[0]).toContain(category.label);
+			expect(h.render()[0]).not.toContain("Context ·");
+			return root;
+		};
+		const back = () => h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+		try {
+			select(h.viewer, system.id);
+			let root = checkCategory(system);
+			expect(nodes(root).some(node => node.key === "system/0")).toBe(true);
+			expect(nodes(root).some(node => node.key === "system/1")).toBe(true);
+			h.viewer.handleInput("\r");
+			root = checkCategory(system);
+			expect(nodes(root).some(node => node.key === "entry-system/0")).toBe(true);
+			expect(
+				nodes(root).some(node => node.k === "text" && textValue(node.p?.spans)?.includes(system.entries[0]!.label)),
+			).toBe(true);
+			back();
+			checkCategory(system);
+			back();
+			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
+			expect(h.render()[0]).toContain(data.modelLabel);
+
+			const output = data.categories.find(category => category.id === "tool-output")!;
+			const read = output.children![0]!;
+			select(h.viewer, read.key!);
+			root = checkCategory(read);
+			expect(nodes(root).some(node => node.key === "entry-result/0")).toBe(true);
+			back();
+			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
+
+			const empty = data.categories.find(category => category.id === "custom-tools")!;
+			select(h.viewer, empty.id);
+			checkCategory(empty);
+			back();
+			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
+		} finally {
+			h.viewer.dispose();
+		}
+	});
+
 	it("exposes native token and usage columns with selection colors but no token bold", () => {
 		const h = harness();
 		try {
@@ -572,7 +628,12 @@ describe("ContextViewer presentation", () => {
 	});
 
 	it("distinguishes tiny nonzero usage from zero and the rounding boundary", () => {
-		for (const [tokens, share] of [[0, "0.0%"], [1, "<0.1%"], [99, "<0.1%"], [100, "0.1%"]] as const) {
+		for (const [tokens, share] of [
+			[0, "0.0%"],
+			[1, "<0.1%"],
+			[99, "<0.1%"],
+			[100, "0.1%"],
+		] as const) {
 			const data = fixture();
 			const h = harness({
 				...data,
