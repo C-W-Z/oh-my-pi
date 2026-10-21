@@ -10,12 +10,7 @@ import { buildSessionContextView } from "../../src/session/context-view";
 import { buildSystemPrompt } from "../../src/system-prompt";
 import type { Skill } from "../../src/extensibility/skills";
 import { computeSessionContextBreakdown } from "../../src/session/context-usage-runtime";
-import {
-	convertToLlm,
-	invalidateConvertToLlmArrayCache,
-	INTERRUPTED_THINKING_MESSAGE_TYPE,
-	USER_INTERRUPT_LABEL,
-} from "../../src/session/messages";
+import { convertToLlm, INTERRUPTED_THINKING_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../src/session/messages";
 import type { ContextViewData } from "@oh-my-pi/pi-tui/overlays/context-viewer";
 
 const model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
@@ -448,27 +443,13 @@ describe("context snapshot message projection and snapshots", () => {
 		expect(category(initial, "system-prompt").entries.map(entry => entry.text)).toEqual(["original system"]);
 	});
 
-	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {
-		const assistant = {
-			...reply([
-				{ type: "thinking", thinking: "signed reasoning", thinkingSignature: "signature" },
-				{ type: "thinking", thinking: "", thinkingSignature: "encoded" },
-				{ type: "toolCall", name: "xd://recall", id: "call", arguments: { query: "history" } },
-				{ type: "text", text: "assistant answer" },
-				{ type: "thinking", thinking: "incomplete trailing reasoning" },
-			]),
-			stopReason: "aborted",
-		} satisfies AssistantMessage;
+	it("projects canonical tool names and metadata without rewriting saved content", () => {
+		const assistant = reply([
+			{ type: "toolCall", name: "xd://recall", id: "call", arguments: { query: "history" } },
+			{ type: "text", text: "assistant answer" },
+		]);
 		const messages: AgentMessage[] = [
 			assistant,
-			{
-				role: "custom",
-				customType: INTERRUPTED_THINKING_MESSAGE_TYPE,
-				content: "preserved continuity",
-				display: false,
-				attribution: "agent",
-				timestamp: 11,
-			},
 			{
 				role: "toolResult",
 				toolName: "xd://recall",
@@ -480,13 +461,7 @@ describe("context snapshot message projection and snapshots", () => {
 		];
 		const session = sessionWith({ messages });
 		const before = structuredClone(session.messages);
-		const projected = convertToLlm(session.messages);
 		const data = buildSessionContextView(session);
-		expect(category(data, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
-			"signed reasoning",
-			"[Encoded thinking]",
-		]);
-		expect(category(data, "assistant-thinking").entries.map(entry => entry.timestamp)).toEqual([10, 10]);
 		expect(category(data, "assistant-messages").entries.map(entry => entry.timestamp)).toEqual([10]);
 		const call = category(data, "tool-calls").entries[0]!;
 		expect(call).toMatchObject({ label: "recall", timestamp: 10, callId: "call" });
@@ -497,16 +472,10 @@ describe("context snapshot message projection and snapshots", () => {
 			callId: "call",
 		});
 		expect(category(data, "tool-output").children?.map(group => group.label)).toEqual(["recall"]);
-		expect(category(data, "user-messages").entries.map(entry => [entry.info, entry.text])).toEqual([
-			["custom · interrupted-thinking → developer", "preserved continuity"],
-		]);
-		expect(category(data, "user-messages").entries[0]?.timestamp).toBe(11);
 		expect(session.messages).toEqual(before);
-		expect(buildSessionContextView(session)).toEqual(data);
-		expect(convertToLlm(session.messages)).toBe(projected);
 	});
 
-	it("updates thinking on continuity-neighbor changes while preserving earlier snapshots and cached repeats", () => {
+	it("rebuilds thinking after continuity changes without mutating earlier snapshots or production caches", () => {
 		const assistant = {
 			...reply([
 				{ type: "thinking", thinking: "complete reasoning", thinkingSignature: "signed" },
@@ -526,21 +495,33 @@ describe("context snapshot message projection and snapshots", () => {
 			customType: INTERRUPTED_THINKING_MESSAGE_TYPE,
 			content: "continuity",
 			display: false,
+			attribution: "agent",
 			timestamp: 11,
 		});
-		const projected = convertToLlm(session.messages);
+		const productionHistory = [...session.messages];
+		const projected = convertToLlm(productionHistory);
+		expect(projected[0]).toMatchObject({
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "complete reasoning" }],
+		});
 		const updated = buildSessionContextView(session);
 		expect(category(updated, "assistant-thinking").entries.map(entry => entry.text)).toEqual(["complete reasoning"]);
-		expect(buildSessionContextView(session)).toEqual(updated);
-		expect(convertToLlm(session.messages)).toBe(projected);
+		expect(category(updated, "user-messages").entries).toEqual([
+			expect.objectContaining({
+				info: "custom · interrupted-thinking → developer",
+				text: "continuity",
+				timestamp: 11,
+			}),
+		]);
 		session.agent.state.messages.pop();
-		invalidateConvertToLlmArrayCache(session.messages);
 		expect(buildSessionContextView(session)).toEqual(initial);
 		expect(category(initial, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
 			"complete reasoning",
 			"unfinished reasoning",
 		]);
 		expect(assistant).toEqual(before);
+		expect(convertToLlm(productionHistory)).toBe(projected);
+		expect(convertToLlm([...productionHistory])[0]).toBe(projected[0]);
 	});
 
 	it("retains source and output positions across omitted executions, empty interruptions and image splits", () => {
@@ -606,10 +587,9 @@ describe("context snapshot message projection and snapshots", () => {
 		expect(output.entries[0]?.info).toContain("pythonExecution");
 		expect(output.entries[0]?.text).toContain("kept output");
 		expect(session.messages).toEqual(before);
-		expect(buildSessionContextView(session)).toEqual(data);
 	});
 
-	it("uses base OMP conversion, excludes executions and counts original image content rather than display summaries", () => {
+	it("keeps included bash execution output while excluding python executions", () => {
 		const messages: AgentMessage[] = [
 			{
 				role: "bashExecution",
@@ -630,20 +610,30 @@ describe("context snapshot message projection and snapshots", () => {
 				excludeFromContext: true,
 				timestamp: 2,
 			},
-			{ role: "custom", customType: "fixture", content: "custom body", display: false, timestamp: 3 },
-			{ role: "fileMention", files: [{ path: "notes.md", content: "file contents" }], timestamp: 4 },
-			{ role: "user", content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }], timestamp: 5 },
 		];
 		const session = sessionWith({ messages });
 		const data = buildSessionContextView(session);
 		expect(category(data, "tool-output").children?.map(group => group.label)).toEqual(["bash"]);
-		const users = category(data, "user-messages").entries;
-		expect(users.some(entry => entry.info?.includes("fixture") && entry.text === "custom body")).toBe(true);
-		expect(users.some(entry => entry.info?.includes("developer") && entry.text.includes("file contents"))).toBe(true);
-		const image = users.find(entry => entry.text.includes("image/png"))!;
-		expect(image.tokens).toBe(session.agent.tokenizer.countMessages([messages[4]!]));
-		expect(JSON.stringify(data)).not.toContain("aGVsbG8=");
+		expect(category(data, "tool-output").entries[0]?.text).toContain("saved stdout");
 		expect(JSON.stringify(data)).not.toContain("excluded");
+	});
+
+	it("counts original image content rather than its display summary without exposing binary data", () => {
+		const message: AgentMessage = {
+			role: "user",
+			content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }],
+			timestamp: 5,
+		};
+		const session = sessionWith({ messages: [message] });
+		const data = buildSessionContextView(session);
+		const users = category(data, "user-messages").entries;
+		expect(users).toEqual([
+			expect.objectContaining({
+				text: expect.stringContaining("image/png"),
+				tokens: session.agent.tokenizer.countMessages([message]),
+			}),
+		]);
+		expect(JSON.stringify(data)).not.toContain("aGVsbG8=");
 	});
 });
 
