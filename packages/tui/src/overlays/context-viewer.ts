@@ -266,7 +266,7 @@ export class ContextViewer implements Component {
 	}
 
 	#safe(value: string): string {
-		return shortenEmbeddedPaths(replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n"))));
+		return shortenEmbeddedPaths(this.#safeContent(value));
 	}
 
 	#safeContent(value: string): string {
@@ -795,7 +795,7 @@ export class ContextViewer implements Component {
 				"col",
 				{},
 				[
-					...this.#entryMetadata(this.#entry!).map(line => text([span(this.#safe(line), "dim")])),
+					...this.#entryMetadata(this.#entry!).map(line => text([span(line, "dim")])),
 					text(styledSpans(content), { wrap: "word" }),
 				],
 				`entry-${this.#entry!.id}`,

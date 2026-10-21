@@ -1286,9 +1286,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		const m = messages[i];
 		const interruptedNext = m.role === "assistant" && followedByInterruptedThinking(messages, i);
 		const fragment = convertOneCached(m, interruptedNext);
-		for (const msg of fragment) {
-			out.push(msg);
-		}
+		for (const msg of fragment) out.push(msg);
 	}
 	if (len === 0) prefixOutputLen = 0;
 
