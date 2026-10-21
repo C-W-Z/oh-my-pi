@@ -16,24 +16,29 @@ import {
 	type ContextThinkingGroup,
 	type ContextViewData,
 	type ContextViewCategory,
+	type ContextViewEntry,
 } from "../src/overlays/context-viewer";
 import { createTheme, getBuiltinThemes } from "../src/theme/loader";
 import { ensureThemeSync, setThemeInstance, theme, type Theme } from "../src/theme/theme";
 import { CONTEXT_PRESENTATION } from "../src/chrome/context-presentation";
 import { sliceWithWidth, visibleWidth } from "../src/utils";
-import { Tokenizer } from "@oh-my-pi/pi-agent-core";
-import { DEFAULT_COMPACTION_SETTINGS } from "@oh-my-pi/pi-agent-core/compaction";
-import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
-import { computeContextBreakdown } from "../src/status-line/context-usage";
 
 const cx = { cols: 100, reduceMotion: false, dark: true, supports: () => false, feature: () => true };
 const meterCx = { ...cx, supports: () => true };
+const viewers: ContextViewer[] = [];
 let previous: Theme;
+let previousBindings: KeybindingsManager;
 beforeEach(() => {
 	ensureThemeSync();
 	previous = theme;
+	previousBindings = getKeybindings();
 });
-afterEach(() => setThemeInstance(previous));
+afterEach(() => {
+	for (const viewer of viewers) viewer.dispose();
+	viewers.length = 0;
+	setThemeInstance(previous);
+	setKeybindings(previousBindings);
+});
 
 function nodes(root: NativeNode): NativeNode[] {
 	return [root, ...(root.c ?? []).flatMap(child => ("k" in child ? nodes(child) : []))];
@@ -51,13 +56,13 @@ function usageColumns(item: NativeNode | undefined): string[] | undefined {
 	return item?.k === "item" ? textValue(item.p?.value)?.split(" · ") : undefined;
 }
 
-function fixture(): ContextViewData {
+function fixture(firstOutput?: ContextViewEntry, secondOutput?: ContextViewEntry): ContextViewData {
 	const output: ContextViewCategory = {
 		id: "tool-output",
 		label: "Tool Output",
 		tokens: 30000,
 		entries: [
-			{
+			firstOutput ?? {
 				id: "result/0",
 				label: "read result",
 				tokens: 20000,
@@ -67,7 +72,13 @@ function fixture(): ContextViewData {
 					Array.from({ length: 100 }, (_, index) => `line ${index}\t${"long ".repeat(30)}`).join("\n") +
 					"\ncontext-output-tail",
 			},
-			{ id: "result/1", label: "bash result", tokens: 10000, text: "short result", timestamp: 60_000 },
+			secondOutput ?? {
+				id: "result/1",
+				label: "bash result",
+				tokens: 10000,
+				text: "short result",
+				timestamp: 60_000,
+			},
 		],
 	};
 	output.children = [
@@ -81,29 +92,22 @@ function fixture(): ContextViewData {
 		buffer: 20000,
 		free: 95000,
 		breakdown: {
-			...computeContextBreakdown(
-				{
-					model: getBundledModel("anthropic", "claude-sonnet-4-5"),
-					systemPrompt: ["system"],
-					agent: { tokenizer: new Tokenizer(), state: { tools: [] } },
-					messages: [],
+			model: undefined,
+			contextWindow: 200000,
+			categories: [],
+			thresholdTokens: 180000,
+			snapcompact: {
+				visionCapable: true,
+				savedTokens: 6000,
+				systemPrompt: {
+					applied: true,
+					textTokens: 10000,
+					imageTokens: 4000,
+					frames: 2,
+					savedTokens: 6000,
+					scope: "all",
 				},
-				{
-					compaction: DEFAULT_COMPACTION_SETTINGS,
-					snapcompact: {
-						visionCapable: true,
-						savedTokens: 6000,
-						systemPrompt: {
-							applied: true,
-							textTokens: 10000,
-							imageTokens: 4000,
-							frames: 2,
-							savedTokens: 6000,
-							scope: "all",
-						},
-					},
-				},
-			),
+			},
 			usedTokens: 85000,
 			freeTokens: 95000,
 			autoCompactBufferTokens: 20000,
@@ -143,6 +147,7 @@ function harness(data = fixture()) {
 	let rows = 24;
 	let closed = 0;
 	const viewer = new ContextViewer(data, { onClose: () => closed++, requestRender: () => {}, getRows: () => rows });
+	viewers.push(viewer);
 	const render = (width = 100) => viewer.render(width).map(line => Bun.stripANSI(line));
 	return { viewer, render, closed: () => closed, resize: (height: number) => (rows = height) };
 }
@@ -188,28 +193,21 @@ describe("ContextViewer keybindings", () => {
 	];
 	for (const { name, bindings, up, down } of navigationBindings) {
 		it(`captures and navigates only with configured keys: ${name}`, () => {
-			const previousBindings = getKeybindings();
 			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, bindings));
 			const h = harness();
-			try {
-				h.render();
-				for (const key of ["\x1b[A", "\x1b[B", "\x10", "\x0e", "k", "j"]) {
-					select(h.viewer, "built-in-tools", false);
-					expect(h.viewer.capturesInput(key)).toBe(key === up || key === down);
-					h.viewer.handleInput(key);
-					expect(selected(h.viewer.describe(cx))).toBe(
-						key === up ? "system-prompt" : key === down ? "custom-tools" : "built-in-tools",
-					);
-				}
-			} finally {
-				h.viewer.dispose();
-				setKeybindings(previousBindings);
+			h.render();
+			for (const key of ["\x1b[A", "\x1b[B", "\x10", "\x0e", "k", "j"]) {
+				select(h.viewer, "built-in-tools", false);
+				expect(h.viewer.capturesInput(key)).toBe(key === up || key === down);
+				h.viewer.handleInput(key);
+				expect(selected(h.viewer.describe(cx))).toBe(
+					key === up ? "system-prompt" : key === down ? "custom-tools" : "built-in-tools",
+				);
 			}
 		});
 	}
 
 	it("remaps opening and returning without retaining Enter or Escape aliases", () => {
-		const previousBindings = getKeybindings();
 		const h = harness();
 		setKeybindings(
 			new KeybindingsManager(TUI_KEYBINDINGS, {
@@ -217,34 +215,28 @@ describe("ContextViewer keybindings", () => {
 				"tui.select.cancel": "b",
 			}),
 		);
-		try {
-			h.render();
-			for (const key of ["\r", "\x1b"]) {
-				expect(h.viewer.capturesInput(key)).toBe(false);
-				h.viewer.handleInput(key);
-			}
-			expect(h.closed()).toBe(0);
-			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			for (const key of ["o", "b"]) expect(h.viewer.capturesInput(key)).toBe(true);
-			select(h.viewer, "tool-output", false);
-			h.viewer.handleInput("o");
-			expect(selected(h.viewer.describe(cx))).toBe("result/0");
-			h.viewer.handleInput("o");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
-			h.viewer.handleInput("b");
-			expect(selected(h.viewer.describe(cx))).toBe("result/0");
-			h.viewer.handleInput("b");
-			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
-			h.viewer.handleInput("b");
-			expect(h.closed()).toBe(1);
-		} finally {
-			h.viewer.dispose();
-			setKeybindings(previousBindings);
+		h.render();
+		for (const key of ["\r", "\x1b"]) {
+			expect(h.viewer.capturesInput(key)).toBe(false);
+			h.viewer.handleInput(key);
 		}
+		expect(h.closed()).toBe(0);
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+		for (const key of ["o", "b"]) expect(h.viewer.capturesInput(key)).toBe(true);
+		select(h.viewer, "tool-output", false);
+		h.viewer.handleInput("o");
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
+		h.viewer.handleInput("o");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+		h.viewer.handleInput("b");
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
+		h.viewer.handleInput("b");
+		expect(selected(h.viewer.describe(cx))).toBe("tool-output");
+		h.viewer.handleInput("b");
+		expect(h.closed()).toBe(1);
 	});
 
 	it("keeps Native open, Back and Close usable when their keyboard actions are unbound", () => {
-		const previousBindings = getKeybindings();
 		const h = harness();
 		setKeybindings(
 			new KeybindingsManager(TUI_KEYBINDINGS, {
@@ -252,64 +244,55 @@ describe("ContextViewer keybindings", () => {
 				"tui.select.cancel": [],
 			}),
 		);
-		try {
-			h.render();
-			for (const key of ["\r", "\x1b", "\x03"]) {
-				expect(h.viewer.capturesInput(key)).toBe(false);
-				h.viewer.handleInput(key);
-			}
-			expect(h.closed()).toBe(0);
-			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			select(h.viewer, "tool-output");
-			h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
-			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
-			expect(selected(h.viewer.describe(cx))).toBe("result/0");
-			h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
-			expect(selected(h.viewer.describe(cx))).toBe("tool-output");
-			h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
-			expect(h.closed()).toBe(1);
-		} finally {
-			h.viewer.dispose();
-			setKeybindings(previousBindings);
+		h.render();
+		for (const key of ["\r", "\x1b", "\x03"]) {
+			expect(h.viewer.capturesInput(key)).toBe(false);
+			h.viewer.handleInput(key);
 		}
+		expect(h.closed()).toBe(0);
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+		select(h.viewer, "tool-output");
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
+		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
+		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+		expect(selected(h.viewer.describe(cx))).toBe("tool-output");
+		h.viewer.handleNativeEvent({ type: "action", key: "close", act: "close", mods: [] });
+		expect(h.closed()).toBe(1);
 	});
 });
 
 describe("ContextViewer navigation", () => {
 	it("keeps Skills token totals visible while native and keyboard navigation cannot focus or open them", () => {
 		const h = harness();
-		try {
-			expect(
-				h
-					.render()
-					.find(line => /\sSkills\s+\d/.test(line))
-					?.match(/\d+K|\d+\.\d%/g),
-			).toEqual(["11K", "5.3%"]);
-			for (const context of [cx, meterCx]) {
-				const root = h.viewer.describe(context);
-				const skills = nodes(root).find(node => node.key === "skills");
-				expect(usageColumns(skills)).toEqual(["11K", "5.3%"]);
-				for (const activate of [false, true]) {
-					select(h.viewer, "skills", activate);
-					const unchanged = h.viewer.describe(context);
-					expect(selected(unchanged)).toBe("system-prompt");
-					expect(nodes(unchanged).some(node => node.key === "overview")).toBe(true);
-					expect(nodes(unchanged).some(node => node.key === "entry-skill/0")).toBe(false);
-				}
+		expect(
+			h
+				.render()
+				.find(line => /\sSkills\s+\d/.test(line))
+				?.match(/\d+K|\d+\.\d%/g),
+		).toEqual(["11K", "5.3%"]);
+		for (const context of [cx, meterCx]) {
+			const root = h.viewer.describe(context);
+			const skills = nodes(root).find(node => node.key === "skills");
+			expect(usageColumns(skills)).toEqual(["11K", "5.3%"]);
+			for (const activate of [false, true]) {
+				select(h.viewer, "skills", activate);
+				const unchanged = h.viewer.describe(context);
+				expect(selected(unchanged)).toBe("system-prompt");
+				expect(nodes(unchanged).some(node => node.key === "overview")).toBe(true);
+				expect(nodes(unchanged).some(node => node.key === "entry-skill/0")).toBe(false);
 			}
-			h.viewer.handleInput("\x1b[B");
-			expect(selected(h.viewer.describe(cx))).toBe("built-in-tools");
-			h.viewer.handleInput("\r");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-tool/0")).toBe(true);
-			h.viewer.handleInput("\x1b");
-			h.viewer.handleInput("\x1b[A");
-			expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
-			h.viewer.handleInput("\r");
-			expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-system/0")).toBe(true);
-		} finally {
-			h.viewer.dispose();
 		}
+		h.viewer.handleInput("\x1b[B");
+		expect(selected(h.viewer.describe(cx))).toBe("built-in-tools");
+		h.viewer.handleInput("\r");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-tool/0")).toBe(true);
+		h.viewer.handleInput("\x1b");
+		h.viewer.handleInput("\x1b[A");
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
+		h.viewer.handleInput("\r");
+		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-system/0")).toBe(true);
 	});
 
 	it("opens a single-entry category directly and returns to its overview selection", () => {
@@ -362,86 +345,74 @@ describe("ContextViewer navigation", () => {
 			return root;
 		};
 		const back = () => h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
-		try {
-			select(h.viewer, system.id);
-			let root = checkCategory(system);
-			expect(nodes(root).some(node => node.key === "system/0")).toBe(true);
-			expect(nodes(root).some(node => node.key === "system/1")).toBe(true);
-			h.viewer.handleInput("\r");
-			root = checkCategory(system);
-			expect(nodes(root).some(node => node.key === "entry-system/0")).toBe(true);
-			expect(
-				nodes(root).some(node => node.k === "text" && textValue(node.p?.spans)?.includes(system.entries[0]!.label)),
-			).toBe(true);
-			back();
-			checkCategory(system);
-			back();
-			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
-			expect(h.render()[0]).toContain(data.modelLabel);
+		select(h.viewer, system.id);
+		let root = checkCategory(system);
+		expect(nodes(root).some(node => node.key === "system/0")).toBe(true);
+		expect(nodes(root).some(node => node.key === "system/1")).toBe(true);
+		h.viewer.handleInput("\r");
+		root = checkCategory(system);
+		expect(nodes(root).some(node => node.key === "entry-system/0")).toBe(true);
+		expect(
+			nodes(root).some(node => node.k === "text" && textValue(node.p?.spans)?.includes(system.entries[0]!.label)),
+		).toBe(true);
+		back();
+		checkCategory(system);
+		back();
+		expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
+		expect(h.render()[0]).toContain(data.modelLabel);
 
-			const output = data.categories.find(category => category.id === "tool-output")!;
-			const read = output.children![0]!;
-			select(h.viewer, read.key!);
-			root = checkCategory(read);
-			expect(nodes(root).some(node => node.key === "entry-result/0")).toBe(true);
-			back();
-			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
+		const output = data.categories.find(category => category.id === "tool-output")!;
+		const read = output.children![0]!;
+		select(h.viewer, read.key!);
+		root = checkCategory(read);
+		expect(nodes(root).some(node => node.key === "entry-result/0")).toBe(true);
+		back();
+		expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
 
-			const empty = data.categories.find(category => category.id === "custom-tools")!;
-			select(h.viewer, empty.id);
-			checkCategory(empty);
-			back();
-			expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
-		} finally {
-			h.viewer.dispose();
-		}
+		const empty = data.categories.find(category => category.id === "custom-tools")!;
+		select(h.viewer, empty.id);
+		checkCategory(empty);
+		back();
+		expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
 	});
 
 	it("selects and opens native list items through reconciled events without activating the buffer", () => {
 		const h = harness();
-		try {
-			const reconciler = new Reconciler("context-swatches");
-			const pending = reconciler
-				.reconcile({ main: [h.viewer], dock: [], layer: [] }, meterCx)
-				.flatMap(op => (op[0] === "add" ? [op[4]] : []));
-			let listPath: string | undefined;
-			for (let index = 0; index < pending.length; index++) {
-				const wire = pending[index]!;
-				if (wire.k === "list") listPath = reconciler.target(wire.id)?.keypath;
-				pending.push(...(wire.c ?? []));
-			}
-			if (!listPath) throw new Error("Missing category list path");
-			h.viewer.handleNativeEvent({ type: "select", key: listPath, item: "tool-output/read" });
-			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
-			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "buffer" });
-			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
-			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "tool-output/read" });
-			expect(JSON.stringify(h.viewer.describe(meterCx))).toContain("context-output-tail");
-			h.viewer.handleInput("\x1b");
-			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
-			h.viewer.handleInput("\x1b[A");
-			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output");
-		} finally {
-			h.viewer.dispose();
+		const reconciler = new Reconciler("context-swatches");
+		const pending = reconciler
+			.reconcile({ main: [h.viewer], dock: [], layer: [] }, meterCx)
+			.flatMap(op => (op[0] === "add" ? [op[4]] : []));
+		let listPath: string | undefined;
+		for (let index = 0; index < pending.length; index++) {
+			const wire = pending[index]!;
+			if (wire.k === "list") listPath = reconciler.target(wire.id)?.keypath;
+			pending.push(...(wire.c ?? []));
 		}
+		if (!listPath) throw new Error("Missing category list path");
+		h.viewer.handleNativeEvent({ type: "select", key: listPath, item: "tool-output/read" });
+		expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+		h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "buffer" });
+		expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+		h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "tool-output/read" });
+		expect(JSON.stringify(h.viewer.describe(meterCx))).toContain("context-output-tail");
+		h.viewer.handleInput("\x1b");
+		expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
+		h.viewer.handleInput("\x1b[A");
+		expect(selected(h.viewer.describe(meterCx))).toBe("tool-output");
 	});
 
 	it("keeps buffer and free totals at normal contrast without opening them", () => {
 		const h = harness();
-		try {
-			const root = h.viewer.describe(meterCx);
-			const list = nodes(root).find(node => node.key === "categories");
-			if (list?.k !== "list") throw new Error("Missing category list");
-			for (const key of ["buffer", "free"]) {
-				const summary = nodes(list).find(node => node.key === key);
-				if (summary?.k !== "item") throw new Error(`Missing summary item: ${key}`);
-				expect(summary.p?.disabled).not.toBe(true);
-				expect(usageColumns(summary)).toEqual(key === "buffer" ? ["20K", "10.0%"] : ["95K", "47.5%"]);
-				select(h.viewer, key);
-				expect(selected(h.viewer.describe(meterCx))).toBe("system-prompt");
-			}
-		} finally {
-			h.viewer.dispose();
+		const root = h.viewer.describe(meterCx);
+		const list = nodes(root).find(node => node.key === "categories");
+		if (list?.k !== "list") throw new Error("Missing category list");
+		for (const key of ["buffer", "free"]) {
+			const summary = nodes(list).find(node => node.key === key);
+			if (summary?.k !== "item") throw new Error(`Missing summary item: ${key}`);
+			expect(summary.p?.disabled).not.toBe(true);
+			expect(usageColumns(summary)).toEqual(key === "buffer" ? ["20K", "10.0%"] : ["95K", "47.5%"]);
+			select(h.viewer, key);
+			expect(selected(h.viewer.describe(meterCx))).toBe("system-prompt");
 		}
 	});
 });
@@ -467,13 +438,12 @@ describe("ContextViewer preview and scrolling", () => {
 	});
 
 	it("opens a short multiline entry through Native activation and Enter, then returns to the same selection", () => {
-		const data = fixture();
-		data.categories.find(category => category.id === "tool-output")!.entries[0] = {
+		const data = fixture({
 			id: "result/0",
 			label: "short multiline",
 			tokens: 1,
 			text: "first line\nmiddle line\nshort-multiline-tail",
-		};
+		});
 		const h = harness(data);
 		h.viewer.describe(cx);
 		select(h.viewer, "tool-output");
@@ -501,8 +471,7 @@ describe("ContextViewer preview and scrolling", () => {
 	});
 
 	it("scrolls Native multiline metadata before changing selection and restores the category viewport after Back", () => {
-		const data = fixture();
-		data.categories.find(category => category.id === "tool-output")!.entries = [
+		const data = fixture(
 			{
 				id: "result/0",
 				label: "long output",
@@ -511,7 +480,7 @@ describe("ContextViewer preview and scrolling", () => {
 				text: "native-output-tail",
 			},
 			{ id: "result/1", label: "next output", tokens: 1, text: "next body" },
-		];
+		);
 		const h = harness(data);
 		h.resize(12);
 		const nativeCx = { ...cx, cols: 48 };
@@ -587,14 +556,12 @@ describe("ContextViewer preview and scrolling", () => {
 	});
 
 	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
-		const data = fixture();
-		const output = data.categories.find(category => category.id === "tool-output")!;
-		output.entries[0] = {
+		const data = fixture({
 			id: "result/0",
 			label: "single line",
 			tokens: 100,
 			text: `${"寬字 ".repeat(10000)}single-line-tail`,
-		};
+		});
 		const h = harness(data);
 		h.resize(12);
 		h.render(48);
@@ -609,11 +576,11 @@ describe("ContextViewer preview and scrolling", () => {
 	});
 
 	it("reserves gutter and scrollbar columns before wrapping a wide-character preview", () => {
-		const data = fixture();
-		const output = data.categories.find(category => category.id === "tool-output")!;
 		const body = `${"寬".repeat(18)}END`;
-		output.entries[0] = { id: "result/0", label: "wide", tokens: 1, text: body };
-		output.entries[1] = { id: "result/1", label: "overflow", tokens: 1, text: "overflow\n".repeat(100) };
+		const data = fixture(
+			{ id: "result/0", label: "wide", tokens: 1, text: body },
+			{ id: "result/1", label: "overflow", tokens: 1, text: "overflow\n".repeat(100) },
+		);
 		const h = harness(data);
 		h.resize(18);
 		h.render(48);
@@ -626,15 +593,13 @@ describe("ContextViewer preview and scrolling", () => {
 	});
 
 	it("keeps selected block gutters on visible body rows after the title scrolls away without marking separators", () => {
-		const data = fixture();
-		const output = data.categories.find(category => category.id === "tool-output")!;
-		output.entries[0] = {
+		const data = fixture({
 			id: "result/0",
 			label: "first title",
 			info: "metadata",
 			tokens: 1,
 			text: "first body\n\n寬字 body\nlast body\nanother body\nmore body\nfinal body",
-		};
+		});
 		const h = harness(data);
 		h.resize(12);
 		h.render(48);
@@ -670,17 +635,13 @@ describe("ContextViewer usage and allocation", () => {
 			usage: tokens,
 			categories: [{ ...data.categories[0]!, tokens: 1 }],
 		});
-		try {
-			for (const width of [48, 100]) {
-				const line = h.render(width).find(line => line.includes("System Prompt"))!;
-				expect(line.match(/<?\d+\.\d%/)?.[0]).toBe(share);
-			}
-			for (const context of [cx, meterCx]) {
-				const item = nodes(h.viewer.describe(context)).find(item => item.key === "system-prompt");
-				expect(usageColumns(item)?.[1]).toBe(share);
-			}
-		} finally {
-			h.viewer.dispose();
+		for (const width of [48, 100]) {
+			const line = h.render(width).find(line => line.includes("System Prompt"))!;
+			expect(line.match(/<?\d+\.\d%/)?.[0]).toBe(share);
+		}
+		for (const context of [cx, meterCx]) {
+			const item = nodes(h.viewer.describe(context)).find(item => item.key === "system-prompt");
+			expect(usageColumns(item)?.[1]).toBe(share);
 		}
 	});
 
@@ -775,28 +736,24 @@ describe("ContextViewer overview and meter", () => {
 			{ id: "first", label: "first source", tokens: 1, text: "one\ntwo\nthree\nfour\nfive\nsource-tail" },
 			{ id: "second", label: "second source", tokens: 1, text: "other source" },
 		];
-		try {
-			const overview = h.render();
-			expect(overview[0]).toContain("Context · GPT-6 Luna");
-			expect(overview[1]).toMatch(/71K.*272K.*26%/);
-			expect(overview[2]).toMatch(/160K.*85%/);
-			expect(overview[3]).toContain("System Prompt");
-			h.resize(12);
-			h.viewer.handleInput("\r");
-			const preview = h.render();
-			expect(preview[1]).toContain("[first source]");
-			expect(preview.join("\n")).toContain("source-tail");
-			h.viewer.handleInput("\r");
-			const full = h.render();
-			expect(full[1]).toContain("[first source]");
-			expect(full.join("\n")).toContain("source-tail");
-			h.viewer.handleInput("\x1b");
-			h.render();
-			h.viewer.handleInput("\x1b");
-			expect(h.render()[1]).toMatch(/71K.*272K.*26%/);
-		} finally {
-			h.viewer.dispose();
-		}
+		const overview = h.render();
+		expect(overview[0]).toContain("Context · GPT-6 Luna");
+		expect(overview[1]).toMatch(/71K.*272K.*26%/);
+		expect(overview[2]).toMatch(/160K.*85%/);
+		expect(overview[3]).toContain("System Prompt");
+		h.resize(12);
+		h.viewer.handleInput("\r");
+		const preview = h.render();
+		expect(preview[1]).toContain("[first source]");
+		expect(preview.join("\n")).toContain("source-tail");
+		h.viewer.handleInput("\r");
+		const full = h.render();
+		expect(full[1]).toContain("[first source]");
+		expect(full.join("\n")).toContain("source-tail");
+		h.viewer.handleInput("\x1b");
+		h.render();
+		h.viewer.handleInput("\x1b");
+		expect(h.render()[1]).toMatch(/71K.*272K.*26%/);
 	});
 
 	it.each([
@@ -807,91 +764,79 @@ describe("ContextViewer overview and meter", () => {
 		data.breakdown.thresholdTokens = 160000;
 		if (emptyWeights) for (const category of data.categories) category.tokens = 0;
 		const h = harness(data);
-		try {
-			const root = h.viewer.describe({ ...cx, supports: () => supportsMeter });
-			const lines = nodes(root).flatMap(node => (node.k === "text" ? [textValue(node.p?.spans)] : []));
-			expect(lines.some(line => /85K.*200K/.test(line ?? ""))).toBe(true);
-			expect(lines.some(line => /75K.*80%/.test(line ?? ""))).toBe(true);
-		} finally {
-			h.viewer.dispose();
-		}
+		const root = h.viewer.describe({ ...cx, supports: () => supportsMeter });
+		const lines = nodes(root).flatMap(node => (node.k === "text" ? [textValue(node.p?.spans)] : []));
+		expect(lines.some(line => /85K.*200K/.test(line ?? ""))).toBe(true);
+		expect(lines.some(line => /75K.*80%/.test(line ?? ""))).toBe(true);
 	});
 
 	it("keeps category swatches matched to the usage bar", () => {
 		const h = harness();
-		try {
-			const root = h.viewer.describe(meterCx);
-			const all = nodes(root);
-			const meter = all.find(node => node.k === "meter");
-			if (meter?.k !== "meter") throw new Error("Missing context meter");
-			const list = all.find(node => node.key === "categories");
-			if (!list) throw new Error("Missing categories");
-			const item = (key: string) => {
-				const row = nodes(list).find(node => node.key === key);
-				if (!row) throw new Error(`Missing category: ${key}`);
-				return row;
-			};
-			const expected = [
-				{
-					row: item("system-prompt"),
-					glyph: "■",
-					color: CONTEXT_PRESENTATION["system-prompt"].color,
-					bar: item("system-prompt"),
-				},
-				{ row: item("skills"), glyph: "■", color: CONTEXT_PRESENTATION.skills.color },
-				{
-					row: item("tool-output/read"),
-					glyph: "■",
-					color: CONTEXT_PRESENTATION["tool-output"].color,
-					bar: item("tool-output"),
-				},
-			];
-			for (const item of expected) {
-				const swatch = itemLabel(item.row)?.[0];
-				expect(swatch?.t.trim()).toBe(item.glyph);
-				expect(swatch?.s).toBe(item.color);
-				if (item.bar) {
-					const label = itemLabel(item.bar)?.[1]?.t;
-					expect(meter.p?.parts?.find(part => part.label?.startsWith(`${label} ·`))?.token).toBe(item.color);
-				}
+		const root = h.viewer.describe(meterCx);
+		const all = nodes(root);
+		const meter = all.find(node => node.k === "meter");
+		if (meter?.k !== "meter") throw new Error("Missing context meter");
+		const list = all.find(node => node.key === "categories");
+		if (!list) throw new Error("Missing categories");
+		const item = (key: string) => {
+			const row = nodes(list).find(node => node.key === key);
+			if (!row) throw new Error(`Missing category: ${key}`);
+			return row;
+		};
+		const expected = [
+			{
+				row: item("system-prompt"),
+				glyph: "■",
+				color: CONTEXT_PRESENTATION["system-prompt"].color,
+				bar: item("system-prompt"),
+			},
+			{ row: item("skills"), glyph: "■", color: CONTEXT_PRESENTATION.skills.color },
+			{
+				row: item("tool-output/read"),
+				glyph: "■",
+				color: CONTEXT_PRESENTATION["tool-output"].color,
+				bar: item("tool-output"),
+			},
+		];
+		for (const item of expected) {
+			const swatch = itemLabel(item.row)?.[0];
+			expect(swatch?.t.trim()).toBe(item.glyph);
+			expect(swatch?.s).toBe(item.color);
+			if (item.bar) {
+				const label = itemLabel(item.bar)?.[1]?.t;
+				expect(meter.p?.parts?.find(part => part.label?.startsWith(`${label} ·`))?.token).toBe(item.color);
 			}
-			expect(selected(root)).toBe("system-prompt");
-			const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
-			expect(itemLabel(fallback)?.[0]?.t.trim()).toBe(theme.symbol("context.content"));
-		} finally {
-			h.viewer.dispose();
 		}
+		expect(selected(root)).toBe("system-prompt");
+		const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
+		expect(itemLabel(fallback)?.[0]?.t.trim()).toBe(theme.symbol("context.content"));
 	});
 
 	it("places a stacked meter above selectable categories on meter-capable terminals", () => {
 		const data = fixture();
 		const h = harness(data);
-		try {
-			for (const cols of [48, 100]) {
-				const root = h.viewer.describe({ ...meterCx, cols });
-				const all = nodes(root);
-				const meter = all.find(node => node.k === "meter");
-				if (meter?.k !== "meter") throw new Error("Missing context meter");
-				expect(meter.p?.value).toBe(data.usage / data.window);
-				expect(meter.p?.parts?.map(part => part.value)).toEqual([
-					21250 / 200000,
-					10625 / 200000,
-					10625 / 200000,
-					10625 / 200000,
-					31875 / 200000,
-					95000 / 200000,
-					20000 / 200000,
-				]);
-				expect(meter.p?.parts?.at(-1)).toMatchObject({ token: "warning", hatch: true });
-				expect(meter.p?.marks?.[0]?.at).toBe(data.breakdown.thresholdTokens! / data.window);
-				const body = root.c?.findIndex(child => "k" in child && child.key === "overview");
-				const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
-				expect(bar).toBeLessThan(body!);
-			}
-			expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
-		} finally {
-			h.viewer.dispose();
+		for (const cols of [48, 100]) {
+			const root = h.viewer.describe({ ...meterCx, cols });
+			const all = nodes(root);
+			const meter = all.find(node => node.k === "meter");
+			if (meter?.k !== "meter") throw new Error("Missing context meter");
+			expect(meter.p?.value).toBe(data.usage / data.window);
+			expect(meter.p?.parts?.map(part => part.value)).toEqual([
+				21250 / 200000,
+				10625 / 200000,
+				10625 / 200000,
+				10625 / 200000,
+				31875 / 200000,
+				95000 / 200000,
+				20000 / 200000,
+			]);
+			expect(meter.p?.parts?.at(-1)).toMatchObject({ token: "warning", hatch: true });
+			expect(meter.p?.marks?.[0]?.at).toBe(data.breakdown.thresholdTokens! / data.window);
+			const body = root.c?.findIndex(child => "k" in child && child.key === "overview");
+			const bar = root.c?.findIndex(child => "k" in child && child.k === "meter");
+			expect(bar).toBeLessThan(body!);
 		}
+		expect(nodes(h.viewer.describe(cx)).some(node => node.k === "meter")).toBe(false);
 	});
 });
 
@@ -922,29 +867,25 @@ describe("ContextViewer entry content", () => {
 		];
 		const h = harness({ ...data, categories });
 		h.resize(32);
-		try {
-			h.render(160);
-			select(h.viewer, "assistant-thinking");
-			for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
-				expect(preview.match(/1,250 tokens/g)).toHaveLength(1);
-				expect(preview.indexOf(group.label)).toBeLessThan(preview.indexOf("[first block]"));
-				expect(preview).toContain("  [first block] —");
-				expect(preview).toContain("  [second block] —");
-				expect(preview).toContain("[ordinary block] 25 tokens");
-				expect(preview).not.toContain("] 0 tokens");
-				expect(preview).not.toContain("unavailable");
+		h.render(160);
+		select(h.viewer, "assistant-thinking");
+		for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+			expect(preview.match(/1,250 tokens/g)).toHaveLength(1);
+			expect(preview.indexOf(group.label)).toBeLessThan(preview.indexOf("[first block]"));
+			expect(preview).toContain("  [first block] —");
+			expect(preview).toContain("  [second block] —");
+			expect(preview).toContain("[ordinary block] 25 tokens");
+			expect(preview).not.toContain("] 0 tokens");
+			expect(preview).not.toContain("unavailable");
+		}
+		for (const id of ["first", "second"]) {
+			h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+			for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+				expect(detail).toContain(`[${id} block] —`);
+				expect(detail).toContain(`${group.label} · 1,250 tokens`);
+				expect(detail).toContain(`${id} thinking body`);
 			}
-			for (const id of ["first", "second"]) {
-				h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
-				for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
-					expect(detail).toContain(`[${id} block] —`);
-					expect(detail).toContain(`${group.label} · 1,250 tokens`);
-					expect(detail).toContain(`${id} thinking body`);
-				}
-				h.viewer.handleInput("\x1b");
-			}
-		} finally {
-			h.viewer.dispose();
+			h.viewer.handleInput("\x1b");
 		}
 	});
 
@@ -974,24 +915,20 @@ describe("ContextViewer entry content", () => {
 		];
 		const h = harness(data);
 		h.resize(32);
-		try {
-			h.render(160);
-			select(h.viewer, "system-prompt");
-			for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
-				expect(preview).toContain("[interrupted single] N/A · Interrupted");
-				expect(preview).toContain(`${group.label} · N/A · Interrupted`);
-				expect(preview).not.toContain("0 tokens");
+		h.render(160);
+		select(h.viewer, "system-prompt");
+		for (const preview of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+			expect(preview).toContain("[interrupted single] N/A · Interrupted");
+			expect(preview).toContain(`${group.label} · N/A · Interrupted`);
+			expect(preview).not.toContain("0 tokens");
+		}
+		for (const id of ["interrupted-single", "second"]) {
+			h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+			for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
+				expect(detail).toContain("N/A · Interrupted");
+				expect(detail).not.toContain("0 tokens");
 			}
-			for (const id of ["interrupted-single", "second"]) {
-				h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
-				for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
-					expect(detail).toContain("N/A · Interrupted");
-					expect(detail).not.toContain("0 tokens");
-				}
-				h.viewer.handleInput("\x1b");
-			}
-		} finally {
-			h.viewer.dispose();
+			h.viewer.handleInput("\x1b");
 		}
 	});
 
@@ -1154,20 +1091,16 @@ describe("ContextViewer theme and responsive layout", () => {
 		const data = fixture();
 		data.categories[0]!.label = "寬".repeat(80);
 		const h = harness(data);
-		try {
-			for (const width of [48, 100]) {
-				const lines = h.render(width).filter(line => /\d+K?\s+\d+\.\d%/.test(line));
-				const ends = lines.map(line => {
-					const match = /(\d+K?)\s+(\d+\.\d%)/.exec(line)!;
-					const start = visibleWidth(line.slice(0, match.index));
-					return [start + match[1]!.length, start + match[0].length];
-				});
-				expect(ends.length).toBeGreaterThan(1);
-				expect(ends.every(end => end[0] === ends[0]![0] && end[1] === ends[0]![1])).toBe(true);
-				expect(h.render(width).every(line => visibleWidth(line) <= width)).toBe(true);
-			}
-		} finally {
-			h.viewer.dispose();
+		for (const width of [48, 100]) {
+			const lines = h.render(width).filter(line => /\d+K?\s+\d+\.\d%/.test(line));
+			const ends = lines.map(line => {
+				const match = /(\d+K?)\s+(\d+\.\d%)/.exec(line)!;
+				const start = visibleWidth(line.slice(0, match.index));
+				return [start + match[1]!.length, start + match[0].length];
+			});
+			expect(ends.length).toBeGreaterThan(1);
+			expect(ends.every(end => end[0] === ends[0]![0] && end[1] === ends[0]![1])).toBe(true);
+			expect(h.render(width).every(line => visibleWidth(line) <= width)).toBe(true);
 		}
 	});
 
