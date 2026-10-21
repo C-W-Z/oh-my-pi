@@ -94,7 +94,7 @@ const reply = (content: AssistantMessage["content"]): AssistantMessage => ({
 	timestamp: 10,
 });
 
-describe("context snapshot", () => {
+describe("context snapshot capacity and savings", () => {
 	it("retains compaction thresholds and computes optional wire savings without changing content capacity", () => {
 		const prompt = ["Repeated context policy for the next model request.\n".repeat(1000)];
 		const settings = Settings.isolated({
@@ -128,7 +128,9 @@ describe("context snapshot", () => {
 		expect(data.buffer).toBeGreaterThan(0);
 		expect(data.free + data.buffer).toBe(data.window - 100);
 	});
+});
 
+describe("context snapshot system prompt and skills", () => {
 	it("retains full instruction and skill content in effective system blocks without reading their files", async () => {
 		const skills: Skill[] = [
 			{
@@ -240,7 +242,27 @@ describe("context snapshot", () => {
 			entries: [{ id: "system-prompt/0", text: "", tokens: 0 }],
 		});
 	});
+});
 
+describe("context snapshot tool schemas", () => {
+	it("counts only active schemas, tolerates cyclic schemas and keeps snapshots detached from later updates", () => {
+		const read = tool("read");
+		const broken = tool("cyclic");
+		const schema: Record<string, unknown> = {};
+		schema.self = schema;
+		broken.parameters = schema as never;
+		const session = sessionWith({ tools: [read, broken] });
+		const data = buildSessionContextView(session);
+		expect(category(data, "custom-tools").entries[0]?.text).toContain("Schema unavailable");
+		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
+		session.agent.setTools([]);
+		session.agent.setSystemPrompt(["different system"]);
+		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
+		expect(category(buildSessionContextView(session), "built-in-tools").entries).toEqual([]);
+	});
+});
+
+describe("context snapshot assistant reasoning", () => {
 	it("separates assistant blocks without charging reasoning usage repeatedly and never exposes signatures", () => {
 		const message = reply([
 			{ type: "text", text: "visible answer" },
@@ -290,77 +312,6 @@ describe("context snapshot", () => {
 		);
 		expect(totalTokens(initial)).toBe(1000);
 		expect(JSON.stringify(updated)).not.toContain("private-signature");
-	});
-
-	it("groups retained server-tool calls and results while preserving every field for inspection", () => {
-		const message = reply([
-			{
-				type: "anthropicServerTool",
-				block: { type: "server_tool_use", id: "search", name: "web_search", input: { query: "release notes" } },
-			},
-			{
-				type: "anthropicServerTool",
-				block: {
-					type: "server_tool_use",
-					id: "tools",
-					name: "tool_search_tool_regex",
-					input: { pattern: "read.*" },
-				},
-			},
-			{
-				type: "anthropicServerTool",
-				block: {
-					type: "tool_search_tool_result",
-					tool_use_id: "tools",
-					content: [{ type: "tool_reference", tool_name: "read_file" }],
-				},
-			},
-			{
-				type: "anthropicServerTool",
-				block: {
-					type: "web_search_tool_result",
-					tool_use_id: "search",
-					content: [
-						{
-							type: "web_search_result",
-							title: "Release notes",
-							url: "https://example.org/releases",
-							encrypted_content: "private-ciphertext",
-							signature: "private-signature",
-						},
-					],
-				},
-			},
-		]);
-		const session = sessionWith({ prompt: [], messages: [message] });
-		const before = structuredClone(message);
-		const data = buildSessionContextView(session);
-		const calls = category(data, "tool-calls").entries;
-		expect(calls.map(entry => [entry.label, entry.callId])).toEqual([
-			["web_search", "search"],
-			["tool_search_tool_regex", "tools"],
-		]);
-		expect(JSON.parse(calls[0]!.text).input).toEqual({ query: "release notes" });
-		const results = category(data, "tool-output");
-		expect(results.entries.map(entry => [entry.label, entry.callId, entry.timestamp])).toEqual([
-			["tool_search_tool_regex", "tools", message.timestamp],
-			["web_search", "search", message.timestamp],
-		]);
-		expect(JSON.parse(results.entries[0]!.text).content).toEqual([
-			{ type: "tool_reference", tool_name: "read_file" },
-		]);
-		expect(JSON.parse(results.entries[1]!.text).content).toEqual([
-			{
-				type: "web_search_result",
-				title: "Release notes",
-				url: "https://example.org/releases",
-				encrypted_content: "private-ciphertext",
-				signature: "private-signature",
-			},
-		]);
-		expect(category(data, "assistant-messages").entries).toEqual([]);
-		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
-		expect(message).toEqual(before);
 	});
 
 	it("counts payload-only reasoning safely and does not duplicate it beside explicit thinking", () => {
@@ -474,7 +425,9 @@ describe("context snapshot", () => {
 		expect(thinking.tokens).toBe(0);
 		expect(thinking.entries[0]?.interrupted).toBe(true);
 	});
+});
 
+describe("context snapshot message projection and snapshots", () => {
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {
 		const assistant = {
 			...reply([
@@ -636,31 +589,6 @@ describe("context snapshot", () => {
 		expect(buildSessionContextView(session)).toEqual(data);
 	});
 
-	it("sorts per-tool totals by tokens then first appearance and saved results by timestamp then conversation order", () => {
-		const result = (name: string, text: string, timestamp: number): AgentMessage => ({
-			role: "toolResult",
-			toolName: name,
-			toolCallId: "duplicate",
-			content: [{ type: "text", text }],
-			isError: false,
-			timestamp,
-		});
-		const session = sessionWith({
-			messages: [
-				result("small", "b", 20),
-				result("large", "large ".repeat(100), 30),
-				result("small", "a", 10),
-				result("small", "c", 20),
-			],
-		});
-		const output = category(buildSessionContextView(session), "tool-output");
-		expect(output.children?.map(group => group.label)).toEqual(["large", "small"]);
-		expect(output.children?.[1]?.entries.map(entry => entry.text)).toEqual(["a", "b", "c"]);
-		expect(output.entries.map(entry => entry.text)).toEqual(["a", "b", "c", "large ".repeat(100)]);
-		expect(new Set(output.entries.map(entry => entry.id)).size).toBe(4);
-		expect(output.tokens).toBe(output.children!.reduce((sum, group) => sum + group.tokens, 0));
-	});
-
 	it("uses base OMP conversion, excludes executions and counts original image content rather than display summaries", () => {
 		const messages: AgentMessage[] = [
 			{
@@ -697,20 +625,102 @@ describe("context snapshot", () => {
 		expect(JSON.stringify(data)).not.toContain("aGVsbG8=");
 		expect(JSON.stringify(data)).not.toContain("excluded");
 	});
+});
 
-	it("counts only active schemas, tolerates cyclic schemas and keeps snapshots detached from later updates", () => {
-		const read = tool("read");
-		const broken = tool("cyclic");
-		const schema: Record<string, unknown> = {};
-		schema.self = schema;
-		broken.parameters = schema as never;
-		const session = sessionWith({ tools: [read, broken] });
+describe("context snapshot tool calls and output", () => {
+	it("groups retained server-tool calls and results while preserving every field for inspection", () => {
+		const message = reply([
+			{
+				type: "anthropicServerTool",
+				block: { type: "server_tool_use", id: "search", name: "web_search", input: { query: "release notes" } },
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "server_tool_use",
+					id: "tools",
+					name: "tool_search_tool_regex",
+					input: { pattern: "read.*" },
+				},
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "tool_search_tool_result",
+					tool_use_id: "tools",
+					content: [{ type: "tool_reference", tool_name: "read_file" }],
+				},
+			},
+			{
+				type: "anthropicServerTool",
+				block: {
+					type: "web_search_tool_result",
+					tool_use_id: "search",
+					content: [
+						{
+							type: "web_search_result",
+							title: "Release notes",
+							url: "https://example.org/releases",
+							encrypted_content: "private-ciphertext",
+							signature: "private-signature",
+						},
+					],
+				},
+			},
+		]);
+		const session = sessionWith({ prompt: [], messages: [message] });
+		const before = structuredClone(message);
 		const data = buildSessionContextView(session);
-		expect(category(data, "custom-tools").entries[0]?.text).toContain("Schema unavailable");
-		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
-		session.agent.setTools([]);
-		session.agent.setSystemPrompt(["different system"]);
-		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
-		expect(category(buildSessionContextView(session), "built-in-tools").entries).toEqual([]);
+		const calls = category(data, "tool-calls").entries;
+		expect(calls.map(entry => [entry.label, entry.callId])).toEqual([
+			["web_search", "search"],
+			["tool_search_tool_regex", "tools"],
+		]);
+		expect(JSON.parse(calls[0]!.text).input).toEqual({ query: "release notes" });
+		const results = category(data, "tool-output");
+		expect(results.entries.map(entry => [entry.label, entry.callId, entry.timestamp])).toEqual([
+			["tool_search_tool_regex", "tools", message.timestamp],
+			["web_search", "search", message.timestamp],
+		]);
+		expect(JSON.parse(results.entries[0]!.text).content).toEqual([
+			{ type: "tool_reference", tool_name: "read_file" },
+		]);
+		expect(JSON.parse(results.entries[1]!.text).content).toEqual([
+			{
+				type: "web_search_result",
+				title: "Release notes",
+				url: "https://example.org/releases",
+				encrypted_content: "private-ciphertext",
+				signature: "private-signature",
+			},
+		]);
+		expect(category(data, "assistant-messages").entries).toEqual([]);
+		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
+		expect(message).toEqual(before);
+	});
+
+	it("sorts per-tool totals by tokens then first appearance and saved results by timestamp then conversation order", () => {
+		const result = (name: string, text: string, timestamp: number): AgentMessage => ({
+			role: "toolResult",
+			toolName: name,
+			toolCallId: "duplicate",
+			content: [{ type: "text", text }],
+			isError: false,
+			timestamp,
+		});
+		const session = sessionWith({
+			messages: [
+				result("small", "b", 20),
+				result("large", "large ".repeat(100), 30),
+				result("small", "a", 10),
+				result("small", "c", 20),
+			],
+		});
+		const output = category(buildSessionContextView(session), "tool-output");
+		expect(output.children?.map(group => group.label)).toEqual(["large", "small"]);
+		expect(output.children?.[1]?.entries.map(entry => entry.text)).toEqual(["a", "b", "c"]);
+		expect(output.entries.map(entry => entry.text)).toEqual(["a", "b", "c", "large ".repeat(100)]);
+		expect(new Set(output.entries.map(entry => entry.id)).size).toBe(4);
+		expect(output.tokens).toBe(output.children!.reduce((sum, group) => sum + group.tokens, 0));
 	});
 });
