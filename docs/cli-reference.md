@@ -79,10 +79,10 @@ unavailable skills and is subtracted from the System Prompt estimate to avoid
 double-counting.
 
 Thinking counts use the session tokenizer's estimates. Multiple thinking blocks
-in one message share a total shown on the message heading; individual blocks
-show `—` when no separate count is available. A single block shows its count
-directly. Empty interrupted thinking without usage shows `N/A · Interrupted`,
-not a measured zero.
+in one message share a total shown on the message heading; grouped blocks show
+`—` rather than individual counts. A single block shows its count directly.
+Empty interrupted thinking without usage shows `N/A · Interrupted`, not a
+measured zero.
 
 Retained Anthropic web-search and tool-search calls and their results appear in
 Tool Calls and Tool Output, with readable arguments and metadata. Encoded

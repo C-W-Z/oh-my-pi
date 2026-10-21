@@ -139,6 +139,7 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				: undefined;
 		if (message.role === "assistant") {
 			// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
+			let reasoningCount = 0;
 			const blockTokens = message.content.map(block => {
 				if (block.type === "text") return tokenizer.countTokens(block.text);
 				if (block.type === "toolCall") {
@@ -148,13 +149,13 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 						return tokenizer.countTokens(block.name);
 					}
 				}
-				if (block.type === "thinking" || block.type === "redactedThinking") return 0;
+				if (block.type === "thinking" || block.type === "redactedThinking") {
+					reasoningCount++;
+					return 0;
+				}
 				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
 				return tokenizer.countMessages([isolated]);
 			});
-			const reasoningIndexes = message.content.flatMap((block, index) =>
-				block.type === "thinking" || block.type === "redactedThinking" ? [index] : [],
-			);
 			const messageTokens =
 				convertedIndex === latestAssistantIndex
 					? tokenizer.countLatestTurn(message)
@@ -168,18 +169,17 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				!message.providerPayload &&
 				message.content.every(block => block.type === "thinking" && !block.thinking.trim());
 			const thinkingGroup: ContextThinkingGroup | undefined =
-				reasoningIndexes.length > 1
+				reasoningCount > 1
 					? {
 							id: `assistant-thinking/${prefix}`,
 							label: `Message ${messageIndex + 1}`,
 							tokens: reasoningBudget,
-							tokenStatus: interrupted ? "interrupted" : undefined,
+							interrupted,
 						}
 					: undefined;
 			if (thinkingGroup) byId.get("assistant-thinking")!.tokens += reasoningBudget;
-			else if (reasoningIndexes.length === 1) blockTokens[reasoningIndexes[0]!] = reasoningBudget;
 			// Payload-only reasoning still carries a message-level estimate, without exposing its bytes.
-			if (reasoningBudget > 0 && reasoningIndexes.length === 0) {
+			if (reasoningBudget > 0 && reasoningCount === 0) {
 				add("assistant-thinking", {
 					id: `assistant-thinking/${prefix}/payload`,
 					label: `Thinking 1/1 · message ${messageIndex + 1}`,
@@ -234,20 +234,16 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 						block.type === "toolCall"
 							? block.name
 							: category === "assistant-thinking"
-								? `Thinking ${++thinkingIndex}/${reasoningIndexes.length} · message ${messageIndex + 1}`
+								? `Thinking ${++thinkingIndex}/${reasoningCount} · message ${messageIndex + 1}`
 								: `${block.type} · message ${messageIndex + 1}`,
 					info,
 					text,
 					timestamp: original.timestamp,
-					tokens: blockTokens[blockIndex]!,
+					tokens: category === "assistant-thinking" && !thinkingGroup ? reasoningBudget : blockTokens[blockIndex]!,
 					...(category === "assistant-thinking"
 						? {
 								thinkingGroup,
-								tokenStatus: interrupted
-									? ("interrupted" as const)
-									: thinkingGroup
-										? ("shared" as const)
-										: undefined,
+								interrupted,
 							}
 						: {}),
 				});

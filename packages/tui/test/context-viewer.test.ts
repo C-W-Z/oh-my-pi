@@ -537,7 +537,6 @@ describe("ContextViewer reasoning estimates", () => {
 						id,
 						label: `${id} block`,
 						tokens: 0,
-						tokenStatus: "shared" as const,
 						thinkingGroup: group,
 						text: `${id} thinking body`,
 					})),
@@ -579,21 +578,20 @@ describe("ContextViewer reasoning estimates", () => {
 			id: "interrupted-group",
 			label: "Interrupted thinking turn",
 			tokens: 0,
-			tokenStatus: "interrupted",
+			interrupted: true,
 		};
 		data.categories[0]!.entries = [
 			{
 				id: "interrupted-single",
 				label: "interrupted single",
 				tokens: 0,
-				tokenStatus: "interrupted",
+				interrupted: true,
 				text: "[interrupted]",
 			},
 			...["first", "second"].map(id => ({
 				id,
 				label: `${id} interrupted block`,
 				tokens: 0,
-				tokenStatus: "shared" as const,
 				thinkingGroup: group,
 				text: "[interrupted]",
 			})),

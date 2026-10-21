@@ -32,7 +32,7 @@ export interface ContextThinkingGroup {
 	readonly id: string;
 	readonly label: string;
 	readonly tokens: number;
-	readonly tokenStatus?: "interrupted";
+	readonly interrupted?: boolean;
 }
 
 export interface ContextViewEntry {
@@ -41,7 +41,7 @@ export interface ContextViewEntry {
 	readonly text: string;
 	/** Aggregation weight for the unscaled replay estimate; shared blocks contribute through their group. */
 	readonly tokens: number;
-	readonly tokenStatus?: "shared" | "interrupted";
+	readonly interrupted?: boolean;
 	readonly thinkingGroup?: ContextThinkingGroup;
 	readonly path?: string;
 	readonly info?: string;
@@ -326,17 +326,17 @@ export class ContextViewer implements Component {
 	#entryInfo(entry: ContextViewEntry): string {
 		return this.#safe([entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "));
 	}
-	#tokenEstimate(tokens: number, status?: "shared" | "interrupted"): string {
-		if (status === "shared") return "—";
-		if (status === "interrupted") return "N/A · Interrupted";
-		return `${tokens.toLocaleString("en-US")} tokens`;
+	#tokenEstimate(item: ContextViewEntry | ContextThinkingGroup): string {
+		if ("thinkingGroup" in item && item.thinkingGroup) return "—";
+		if (item.interrupted) return "N/A · Interrupted";
+		return `${item.tokens.toLocaleString("en-US")} tokens`;
 	}
 
 	#groupHeaderLine(group: ContextThinkingGroup): string {
 		const color = CONTEXT_PRESENTATION[this.#category!.id].color;
 		return (
 			theme.fg(color, theme.bold(this.#safe(group.label).replace(/\n/g, " "))) +
-			theme.fg("dim", ` · ${this.#tokenEstimate(group.tokens, group.tokenStatus)}`)
+			theme.fg("dim", ` · ${this.#tokenEstimate(group)}`)
 		);
 	}
 
@@ -344,7 +344,7 @@ export class ContextViewer implements Component {
 		const group = entry.thinkingGroup;
 		return [
 			group && !preview
-				? `${this.#safe(group.label).replace(/\n/g, " ")} · ${this.#tokenEstimate(group.tokens, group.tokenStatus)}`
+				? `${this.#safe(group.label).replace(/\n/g, " ")} · ${this.#tokenEstimate(group)}`
 				: undefined,
 			this.#entryInfo(entry) || undefined,
 			entry.callId !== undefined ? `Call ID: ${this.#safe(entry.callId)}` : undefined,
@@ -366,7 +366,7 @@ export class ContextViewer implements Component {
 		return [
 			span("[", "dim"),
 			span(this.#entryLabel(entry), `${color} strong`),
-			span(`] ${this.#tokenEstimate(entry.tokens, entry.tokenStatus)}`, "dim"),
+			span(`] ${this.#tokenEstimate(entry)}`, "dim"),
 		];
 	}
 
@@ -375,7 +375,7 @@ export class ContextViewer implements Component {
 		return (
 			theme.fg("dim", "[") +
 			theme.fg(color, theme.bold(this.#entryLabel(entry))) +
-			theme.fg("dim", `] ${this.#tokenEstimate(entry.tokens, entry.tokenStatus)}`)
+			theme.fg("dim", `] ${this.#tokenEstimate(entry)}`)
 		);
 	}
 

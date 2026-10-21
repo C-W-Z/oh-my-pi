@@ -448,7 +448,6 @@ describe("context snapshot", () => {
 		const messageTokens = session.agent.tokenizer.countMessage(message);
 		const reasoningBudget = messageTokens - session.agent.tokenizer.countTokens("Answer");
 		expect(thinking.tokens).toBe(reasoningBudget);
-		expect(thinking.entries.map(entry => entry.tokenStatus)).toEqual(["shared", "shared"]);
 		expect(thinking.entries.map(entry => entry.thinkingGroup?.tokens)).toEqual([reasoningBudget, reasoningBudget]);
 		expect(thinking.entries.map(entry => entry.tokens)).toEqual([0, 0]);
 		expect(totalTokens(data)).toBe(messageTokens);
@@ -468,7 +467,7 @@ describe("context snapshot", () => {
 		const data = buildSessionContextView(sessionWith({ prompt: [], messages: [message] }));
 		const thinking = category(data, "assistant-thinking");
 		expect(thinking.tokens).toBe(0);
-		expect(thinking.entries[0]?.tokenStatus).toBe("interrupted");
+		expect(thinking.entries[0]?.interrupted).toBe(true);
 	});
 
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {
