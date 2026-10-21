@@ -112,7 +112,7 @@ export class ContextViewer implements Component {
 	readonly #overview: MenuSelection<OverviewRow>;
 	readonly #overviewScroll = new ScrollView([], { height: 1 });
 	readonly #previewScroll = new ScrollView([], { height: 1 });
-	readonly #fullScroll = new ScrollView([], { height: 1 });
+	readonly #ansiEntryScroll = new ScrollView([], { height: 1 });
 	readonly #panel = new OverlayPanel("Context");
 	readonly #allocated = new Map<ContextViewCategory, number>();
 	readonly #allocationAvailable: boolean;
@@ -131,11 +131,12 @@ export class ContextViewer implements Component {
 	#width = 0;
 	#height = 1;
 	// Only ANSI input needs local full-content scroll geometry.
-	#renderMode: "ansi" | "native" = "ansi";
+	#lastRenderMode: "ansi" | "native" = "ansi";
 	#previewCache:
 		| { category: ContextViewCategory; width: number; height: number; lines: string[]; ranges: EntryRange[] }
 		| undefined;
-	#preparedFull: { entry: ContextViewEntry; text: string; width?: number } | undefined;
+	#entryBodyCache: { entry: ContextViewEntry; text: string } | undefined;
+	#ansiEntryLayoutWidth: number | undefined;
 	// Native scroll requests, not a viewport offset. The reconciler repeats each
 	// line step by the increment in `n`.
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
@@ -236,16 +237,18 @@ export class ContextViewer implements Component {
 
 	invalidate(): void {
 		this.#previewCache = undefined;
-		this.#preparedFull = undefined;
+		this.#entryBodyCache = undefined;
+		this.#ansiEntryLayoutWidth = undefined;
 		this.#panel.invalidate();
 	}
 
 	dispose(): void {
 		this.#disposed = true;
-		this.#preparedFull = undefined;
+		this.#entryBodyCache = undefined;
+		this.#ansiEntryLayoutWidth = undefined;
 		this.#overviewScroll.dispose();
 		this.#previewScroll.dispose();
-		this.#fullScroll.dispose();
+		this.#ansiEntryScroll.dispose();
 		this.#panel.dispose();
 	}
 
@@ -533,38 +536,38 @@ export class ContextViewer implements Component {
 		});
 	}
 
-	#fullLines(width: number, height: number): string[] {
-		this.#prepareFull(width, height);
-		return [...this.#fullScroll.render(width)];
+	#renderAnsiEntry(width: number, height: number): string[] {
+		this.#ensureAnsiEntryLayout(width, height);
+		return [...this.#ansiEntryScroll.render(width)];
 	}
 
-	#fullContent(): string {
+	#entryBodyText(): string {
 		const entry = this.#entry!;
-		if (this.#preparedFull?.entry !== entry) {
-			this.#preparedFull = { entry, text: this.#safeContent(entry.text) };
+		if (this.#entryBodyCache?.entry !== entry) {
+			this.#entryBodyCache = { entry, text: this.#safeContent(entry.text) };
+			this.#ansiEntryLayoutWidth = undefined;
 		}
-		return this.#preparedFull.text;
+		return this.#entryBodyCache.text;
 	}
 
-	#prepareFull(width: number, height: number): void {
-		const content = this.#fullContent();
-		const prepared = this.#preparedFull!;
-		this.#fullScroll.setHeight(height);
-		if (prepared.width !== width) {
-			const entry = prepared.entry;
+	#ensureAnsiEntryLayout(width: number, height: number): void {
+		const content = this.#entryBodyText();
+		this.#ansiEntryScroll.setHeight(height);
+		if (this.#ansiEntryLayoutWidth !== width) {
+			const entry = this.#entry!;
 			const contentWidth = Math.max(1, width - 1);
 			const lines = [
 				truncateToWidth(this.#entryHeaderLine(entry), contentWidth),
 				...this.#entryMetadata(entry).flatMap(line => wrapTextWithAnsi(theme.fg("dim", line), contentWidth)),
 				...content.split("\n").flatMap(line => (line ? wrapTextWithAnsi(line, contentWidth) : [""])),
 			];
-			prepared.width = width;
-			this.#fullScroll.setLines(lines);
+			this.#ansiEntryLayoutWidth = width;
+			this.#ansiEntryScroll.setLines(lines);
 		}
 	}
 
 	render(width: number): readonly string[] {
-		this.#renderMode = "ansi";
+		this.#lastRenderMode = "ansi";
 		this.#width = Math.max(1, width - 4);
 		const terminalRows = Math.max(1, this.#getRows());
 		const summary = this.#layout();
@@ -579,7 +582,7 @@ export class ContextViewer implements Component {
 				? this.#overviewLines(this.#width, this.#height)
 				: this.#state === "category"
 					? this.#previewLines(this.#width, this.#height)
-					: this.#fullLines(this.#width, this.#height);
+					: this.#renderAnsiEntry(this.#width, this.#height);
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
 		const navigation = [editorKey("tui.select.up"), editorKey("tui.select.down")].filter(Boolean).join("/");
@@ -633,27 +636,29 @@ export class ContextViewer implements Component {
 	#openEntry(entry: ContextViewEntry, parent: "overview" | "category"): void {
 		this.#entry = entry;
 		this.#entryParent = parent;
-		this.#preparedFull = undefined;
-		this.#fullScroll.scrollToTop();
+		this.#entryBodyCache = undefined;
+		this.#ansiEntryLayoutWidth = undefined;
+		this.#ansiEntryScroll.scrollToTop();
 		this.#state = "entry";
-		if (this.#renderMode === "ansi" && this.#width > 0) this.#prepareFull(this.#width, this.#height);
+		if (this.#lastRenderMode === "ansi" && this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
 	}
 
 	#back(): void {
 		if (this.#state === "entry") {
 			this.#state = this.#entryParent;
 			this.#entry = undefined;
-			this.#preparedFull = undefined;
-			this.#fullScroll.setLines([]);
+			this.#entryBodyCache = undefined;
+			this.#ansiEntryLayoutWidth = undefined;
+			this.#ansiEntryScroll.setLines([]);
 		} else if (this.#state === "category") this.#state = "overview";
 		else this.#close();
 	}
 
 	#navigate(delta: -1 | 1): void {
 		if (this.#state === "entry") {
-			if (this.#renderMode === "ansi") {
-				if (this.#width > 0) this.#prepareFull(this.#width, this.#height);
-				this.#fullScroll.scroll(delta);
+			if (this.#lastRenderMode === "ansi") {
+				if (this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
+				this.#ansiEntryScroll.scroll(delta);
 			}
 		} else if (this.#state === "overview") {
 			if (!this.#overview.move(delta)) this.#overviewScroll.scroll(delta);
@@ -694,7 +699,7 @@ export class ContextViewer implements Component {
 		this.#requestRender();
 	}
 	describe(cx: DescribeContext): NativeNode {
-		this.#renderMode = "native";
+		this.#lastRenderMode = "native";
 		this.#width = Math.max(1, cx.cols - 4);
 		if (this.#hour12 !== cx.hour12) {
 			this.#hour12 = cx.hour12;
@@ -806,7 +811,7 @@ export class ContextViewer implements Component {
 				scroll: this.#nativeScroll,
 			});
 		} else {
-			const content = this.#fullContent();
+			const content = this.#entryBodyText();
 			const body = node(
 				"col",
 				{},
