@@ -94,6 +94,32 @@ const reply = (content: AssistantMessage["content"]): AssistantMessage => ({
 	timestamp: 10,
 });
 
+function payloadReply(reader: Model, explicitThinking = false): AssistantMessage {
+	const reasoning = { type: "reasoning", id: "rs_private", summary: [], encrypted_content: "private-ciphertext" };
+	const text = { type: "text", text: "visible answer" } as const;
+	return {
+		...reply(
+			explicitThinking
+				? [{ type: "thinking", thinking: "", thinkingSignature: JSON.stringify(reasoning) }, text]
+				: [text],
+		),
+		api: reader.api,
+		provider: reader.provider,
+		model: reader.id,
+		stopReason: "stop",
+		providerPayload: {
+			type: "openaiResponsesHistory",
+			provider: reader.provider,
+			dt: true,
+			items: [
+				reasoning,
+				{ type: "message", role: "assistant", content: [{ type: "output_text", text: text.text }] },
+			],
+		},
+		usage: { ...reply([]).usage, output: 6_000, totalTokens: 6_000, reasoningTokens: 1_000 },
+	};
+}
+
 describe("context snapshot capacity and savings", () => {
 	it("retains compaction thresholds and computes optional wire savings without changing content capacity", () => {
 		const prompt = ["Repeated context policy for the next model request.\n".repeat(1000)];
@@ -131,7 +157,10 @@ describe("context snapshot capacity and savings", () => {
 });
 
 describe("context snapshot system prompt and skills", () => {
-	it("retains full instruction and skill content in effective system blocks without reading their files", async () => {
+	it.each([
+		{ name: "default prompt", customPrompt: undefined },
+		{ name: "custom prompt", customPrompt: "Literal custom prompt." },
+	])("retains effective system blocks and skill content without file I/O: $name", async ({ customPrompt }) => {
 		const skills: Skill[] = [
 			{
 				name: "fixture",
@@ -141,41 +170,44 @@ describe("context snapshot system prompt and skills", () => {
 				source: "user",
 			},
 		];
-		for (const customPrompt of [undefined, "Literal custom prompt."]) {
-			const built = await buildSystemPrompt({
-				cwd: import.meta.dir,
-				customPrompt,
-				personality: "none",
-				activeRepoContext: null,
-				contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
-				skills,
-			});
-			const prompt = [...built.systemPrompt, "Additional effective policy"];
-			const session = sessionWith({ prompt, skills, tools: [tool("read")] });
-			const file = vi.spyOn(Bun, "file");
-			const data = buildSessionContextView(session);
-			const system = category(data, "system-prompt");
-			expect(system.entries.map(entry => entry.text)).toEqual(prompt);
-			expect(system.entries.map(entry => entry.tokens)).toEqual(
-				prompt.map(block => session.agent.tokenizer.countTokens(block)),
-			);
-			const text = system.entries.map(entry => entry.text).join("\n");
-			expect(text).toContain("Unique instruction body");
-			expect(text).toContain("Use <T> & {{literal}} without expansion");
-			if (customPrompt) expect(text).toContain(customPrompt);
-			const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
-			expect(shared.tokens).toBeGreaterThan(0);
-			expect(category(data, "skills")).toMatchObject({ entries: [], tokens: shared.tokens });
-			const fullPromptTokens = system.entries.reduce((sum, entry) => sum + entry.tokens, 0);
-			expect(system.tokens).toBe(fullPromptTokens - shared.tokens);
-			expect(system.tokens + category(data, "skills").tokens).toBe(fullPromptTokens);
-			expect(totalTokens(data)).toBe(fullPromptTokens + category(data, "built-in-tools").tokens);
-			expect(file).not.toHaveBeenCalled();
-			file.mockRestore();
-		}
+		const built = await buildSystemPrompt({
+			cwd: import.meta.dir,
+			customPrompt,
+			personality: "none",
+			activeRepoContext: null,
+			contextFiles: [{ path: "/nonexistent/instructions.md", content: "Unique instruction body" }],
+			skills,
+		});
+		const prompt = [...built.systemPrompt, "Additional effective policy"];
+		const session = sessionWith({ prompt, skills, tools: [tool("read")] });
+		const file = vi.spyOn(Bun, "file");
+		const data = buildSessionContextView(session);
+		const system = category(data, "system-prompt");
+		expect(system.entries.map(entry => entry.text)).toEqual(prompt);
+		expect(system.entries.map(entry => entry.tokens)).toEqual(
+			prompt.map(block => session.agent.tokenizer.countTokens(block)),
+		);
+		const text = system.entries.map(entry => entry.text).join("\n");
+		expect(text).toContain("Unique instruction body");
+		expect(text).toContain("Use <T> & {{literal}} without expansion");
+		if (customPrompt) expect(text).toContain(customPrompt);
+		const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
+		expect(shared.tokens).toBeGreaterThan(0);
+		expect(category(data, "skills")).toMatchObject({ entries: [], tokens: shared.tokens });
+		const fullPromptTokens = system.entries.reduce((sum, entry) => sum + entry.tokens, 0);
+		expect(system.tokens).toBe(fullPromptTokens - shared.tokens);
+		expect(system.tokens + category(data, "skills").tokens).toBe(fullPromptTokens);
+		expect(totalTokens(data)).toBe(fullPromptTokens + category(data, "built-in-tools").tokens);
+		expect(file).not.toHaveBeenCalled();
+		file.mockRestore();
 	});
 
-	it("uses the shared skill estimate with read-tool, hidden-skill and skillful gating", () => {
+	it.each([
+		{ name: "visible skills with read", hasRead: true, onlyHidden: false, skillful: true, attributed: true },
+		{ name: "without read", hasRead: false, onlyHidden: false, skillful: true, attributed: false },
+		{ name: "only hidden skills", hasRead: true, onlyHidden: true, skillful: true, attributed: false },
+		{ name: "skillful disabled", hasRead: true, onlyHidden: false, skillful: false, attributed: false },
+	])("attributes skill tokens under shared gating: $name", ({ hasRead, onlyHidden, skillful, attributed }) => {
 		const visible: Skill = {
 			name: "visible",
 			description: "Visible skill description",
@@ -189,35 +221,26 @@ describe("context snapshot system prompt and skills", () => {
 			description: "Hidden skill description",
 			hide: true,
 		};
-		for (const fixture of [
-			{ skills: [visible, hidden], tools: [tool("read")], skillful: true, visible: true },
-			{ skills: [visible, hidden], tools: [], skillful: true, visible: false },
-			{ skills: [hidden], tools: [tool("read")], skillful: true, visible: false },
-			{ skills: [visible, hidden], tools: [tool("read")], skillful: false, visible: false },
-		]) {
-			const session = sessionWith({
-				prompt: ["Effective policy including visible and hidden skill descriptions.\n".repeat(20)],
-				skills: fixture.skills,
-				tools: fixture.tools,
-				settings: Settings.isolated({
-					"compaction.enabled": false,
-					"todo.enabled": false,
-					skillful: fixture.skillful,
-				}),
-			});
-			const data = buildSessionContextView(session);
-			const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
-			const expected = fixture.visible
-				? session.agent.tokenizer.countTokens([visible.name, visible.description])
-				: 0;
-			expect(shared.tokens).toBe(expected);
-			expect(category(data, "skills")).toMatchObject({ tokens: expected, entries: [] });
-			const system = category(data, "system-prompt");
-			const promptTokens = session.agent.tokenizer.countTokens(session.systemPrompt[0]!);
-			expect(system.entries[0]!.text).toBe(session.systemPrompt[0]!);
-			expect(system.entries[0]!.tokens).toBe(promptTokens);
-			expect(system.tokens + expected).toBe(promptTokens);
-		}
+		const session = sessionWith({
+			prompt: ["Effective policy including visible and hidden skill descriptions.\n".repeat(20)],
+			skills: onlyHidden ? [hidden] : [visible, hidden],
+			tools: hasRead ? [tool("read")] : [],
+			settings: Settings.isolated({
+				"compaction.enabled": false,
+				"todo.enabled": false,
+				skillful,
+			}),
+		});
+		const data = buildSessionContextView(session);
+		const shared = computeSessionContextBreakdown(session).categories.find(category => category.id === "skills")!;
+		const expected = attributed ? session.agent.tokenizer.countTokens([visible.name, visible.description]) : 0;
+		expect(shared.tokens).toBe(expected);
+		expect(category(data, "skills")).toMatchObject({ tokens: expected, entries: [] });
+		const system = category(data, "system-prompt");
+		const promptTokens = session.agent.tokenizer.countTokens(session.systemPrompt[0]!);
+		expect(system.entries[0]!.text).toBe(session.systemPrompt[0]!);
+		expect(system.entries[0]!.tokens).toBe(promptTokens);
+		expect(system.tokens + expected).toBe(promptTokens);
 	});
 
 	it("clamps the System Prompt total when the shared Skills estimate exceeds the effective blocks", () => {
@@ -245,20 +268,14 @@ describe("context snapshot system prompt and skills", () => {
 });
 
 describe("context snapshot tool schemas", () => {
-	it("counts only active schemas, tolerates cyclic schemas and keeps snapshots detached from later updates", () => {
-		const read = tool("read");
+	it("keeps a tool inspectable when its schema is cyclic", () => {
 		const broken = tool("cyclic");
 		const schema: Record<string, unknown> = {};
 		schema.self = schema;
 		broken.parameters = schema as never;
-		const session = sessionWith({ tools: [read, broken] });
+		const session = sessionWith({ tools: [broken] });
 		const data = buildSessionContextView(session);
 		expect(category(data, "custom-tools").entries[0]?.text).toContain("Schema unavailable");
-		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
-		session.agent.setTools([]);
-		session.agent.setSystemPrompt(["different system"]);
-		expect(category(data, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
-		expect(category(buildSessionContextView(session), "built-in-tools").entries).toEqual([]);
 	});
 });
 
@@ -314,58 +331,41 @@ describe("context snapshot assistant reasoning", () => {
 		expect(JSON.stringify(updated)).not.toContain("private-signature");
 	});
 
-	it("counts payload-only reasoning safely and does not duplicate it beside explicit thinking", () => {
+	it.each([
+		{ name: "payload-only reasoning", explicitThinking: false },
+		{ name: "payload with an explicit thinking block", explicitThinking: true },
+	])("counts one reasoning budget without exposing its payload: $name", ({ explicitThinking }) => {
 		const reader = getBundledModel<"openai-codex-responses">("openai-codex", "gpt-6.1-sol")!;
-		const reasoning = { type: "reasoning", id: "rs_private", summary: [], encrypted_content: "private-ciphertext" };
-		const text = "visible answer";
-		const message: AssistantMessage = {
-			...reply([{ type: "text", text }]),
-			api: reader.api,
-			provider: reader.provider,
-			model: reader.id,
-			stopReason: "stop",
-			providerPayload: {
-				type: "openaiResponsesHistory",
-				provider: reader.provider,
-				dt: true,
-				items: [reasoning, { type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
-			},
-			usage: { ...reply([]).usage, output: 6_000, totalTokens: 6_000, reasoningTokens: 1_000 },
-		};
+		const message = payloadReply(reader, explicitThinking);
 		const session = sessionWith({ model: reader, prompt: [], messages: [message] });
 		const before = structuredClone(session.messages);
-		const payloadOnly = buildSessionContextView(session);
-		const visibleTokens = session.agent.tokenizer.countTokens(text);
-		const thinking = category(payloadOnly, "assistant-thinking");
-		expect(thinking.tokens).toBe(1_000);
+		const data = buildSessionContextView(session);
+		const visibleTokens = session.agent.tokenizer.countTokens("visible answer");
+		const thinking = category(data, "assistant-thinking");
 		expect(thinking.entries).toEqual([expect.objectContaining({ tokens: 1_000, timestamp: message.timestamp })]);
-		expect(category(payloadOnly, "assistant-messages").tokens).toBe(visibleTokens);
-		expect(totalTokens(payloadOnly)).toBe(visibleTokens + 1_000);
-		expect(JSON.stringify(payloadOnly)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
+		expect(thinking.tokens).toBe(1_000);
+		expect(category(data, "assistant-messages").tokens).toBe(visibleTokens);
+		expect(totalTokens(data)).toBe(visibleTokens + 1_000);
+		expect(JSON.stringify(data)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
 		expect(session.messages).toEqual(before);
+	});
 
-		const explicit: AssistantMessage = {
-			...message,
-			content: [
-				{ type: "thinking", thinking: "", thinkingSignature: JSON.stringify(reasoning) },
-				{ type: "text", text },
-			],
-		};
-		const withBlock = buildSessionContextView(sessionWith({ model: reader, prompt: [], messages: [explicit] }));
-		expect(category(withBlock, "assistant-thinking").entries).toHaveLength(1);
-		expect(category(withBlock, "assistant-thinking").tokens).toBe(1_000);
-		expect(totalTokens(withBlock)).toBe(totalTokens(payloadOnly));
-		expect(JSON.stringify(withBlock)).not.toMatch(/private-ciphertext|rs_private|encrypted_content/);
+	it("drops payload reasoning after switching to an incompatible or filtering reader", () => {
+		const reader = getBundledModel<"openai-codex-responses">("openai-codex", "gpt-6.1-sol")!;
+		const session = sessionWith({ model: reader, prompt: [], messages: [payloadReply(reader)] });
+		const initial = buildSessionContextView(session);
+		expect(category(initial, "assistant-thinking").tokens).toBe(1_000);
 
 		session.agent.setModel(getBundledModel("openai-codex", "gpt-6-sol")!);
 		const changedReader = buildSessionContextView(session);
 		expect(category(changedReader, "assistant-thinking").entries).toEqual([]);
-		expect(totalTokens(changedReader)).toBe(session.agent.tokenizer.countTokens(text));
+		expect(totalTokens(changedReader)).toBe(session.agent.tokenizer.countTokens("visible answer"));
 
 		session.agent.setModel({ ...reader, compat: { ...reader.compat, filterReasoningHistory: true } });
 		const filtered = buildSessionContextView(session);
 		expect(category(filtered, "assistant-thinking").entries).toEqual([]);
-		expect(totalTokens(filtered)).toBe(session.agent.tokenizer.countTokens(text));
+		expect(totalTokens(filtered)).toBe(session.agent.tokenizer.countTokens("visible answer"));
+		expect(category(initial, "assistant-thinking").tokens).toBe(1_000);
 	});
 
 	it("keeps the tokenizer's thinking budget at message scope without assigning it to individual blocks", () => {
@@ -414,20 +414,40 @@ describe("context snapshot assistant reasoning", () => {
 		expect(category(demoted, "assistant-thinking").tokens).toBe(session.agent.tokenizer.countTokens(summary));
 	});
 
-	it("distinguishes interrupted empty thinking from a measured zero", () => {
+	it.each([
+		{ name: "unmeasured interruption", reasoningTokens: undefined, interrupted: true },
+		{ name: "measured zero", reasoningTokens: 0, interrupted: false },
+	])("distinguishes empty thinking with zero usage: $name", ({ reasoningTokens, interrupted }) => {
 		const message: AssistantMessage = {
 			...reply([{ type: "thinking", thinking: "" }]),
 			stopReason: "aborted",
-			usage: { ...reply([]).usage, output: 0, totalTokens: 0 },
+			usage: { ...reply([]).usage, output: 0, totalTokens: 0, reasoningTokens },
 		};
 		const data = buildSessionContextView(sessionWith({ prompt: [], messages: [message] }));
 		const thinking = category(data, "assistant-thinking");
 		expect(thinking.tokens).toBe(0);
-		expect(thinking.entries[0]?.interrupted).toBe(true);
+		expect(thinking.entries[0]?.interrupted).toBe(interrupted);
 	});
 });
 
 describe("context snapshot message projection and snapshots", () => {
+	it("keeps old tool and prompt snapshots detached while new snapshots use the active state", () => {
+		const session = sessionWith({
+			prompt: ["original system"],
+			tools: [tool("read"), tool("extension")],
+		});
+		const initial = buildSessionContextView(session);
+		session.agent.setTools([tool("replacement")]);
+		session.agent.setSystemPrompt(["different system"]);
+		const updated = buildSessionContextView(session);
+		expect(category(updated, "built-in-tools").entries).toEqual([]);
+		expect(category(updated, "custom-tools").entries.map(entry => entry.label)).toEqual(["replacement"]);
+		expect(category(updated, "system-prompt").entries.map(entry => entry.text)).toEqual(["different system"]);
+		expect(category(initial, "built-in-tools").entries.map(entry => entry.label)).toEqual(["read"]);
+		expect(category(initial, "custom-tools").entries.map(entry => entry.label)).toEqual(["extension"]);
+		expect(category(initial, "system-prompt").entries.map(entry => entry.text)).toEqual(["original system"]);
+	});
+
 	it("projects neighboring continuity and canonical tool names without rewriting saved assistant content", () => {
 		const assistant = {
 			...reply([
@@ -699,7 +719,7 @@ describe("context snapshot tool calls and output", () => {
 		expect(message).toEqual(before);
 	});
 
-	it("sorts per-tool totals by tokens then first appearance and saved results by timestamp then conversation order", () => {
+	it("sorts tool groups by token totals and saved results by timestamp then conversation order", () => {
 		const result = (name: string, text: string, timestamp: number): AgentMessage => ({
 			role: "toolResult",
 			toolName: name,
@@ -722,5 +742,20 @@ describe("context snapshot tool calls and output", () => {
 		expect(output.entries.map(entry => entry.text)).toEqual(["a", "b", "c", "large ".repeat(100)]);
 		expect(new Set(output.entries.map(entry => entry.id)).size).toBe(4);
 		expect(output.tokens).toBe(output.children!.reduce((sum, group) => sum + group.tokens, 0));
+	});
+
+	it("keeps first-appearance group order when token totals tie, regardless of result timestamps", () => {
+		const messages: AgentMessage[] = ["zulu", "alfa"].map((toolName, index) => ({
+			role: "toolResult",
+			toolName,
+			toolCallId: "duplicate",
+			content: [{ type: "text", text: "same output" }],
+			isError: false,
+			timestamp: index === 0 ? 30 : 10,
+		}));
+		const output = category(buildSessionContextView(sessionWith({ messages })), "tool-output");
+		expect(output.children?.map(group => group.tokens)).toEqual([output.tokens / 2, output.tokens / 2]);
+		expect(output.children?.map(group => group.label)).toEqual(["zulu", "alfa"]);
+		expect(output.entries.map(entry => entry.label)).toEqual(["alfa", "zulu"]);
 	});
 });
