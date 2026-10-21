@@ -437,6 +437,29 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(h.closed()).toBe(1);
 	});
 
+	it("preserves the first ANSI scroll before a full-content frame after a Native-only visit", () => {
+		const h = harness(
+			fixture({
+				id: "result/0",
+				label: "scroll probe",
+				tokens: 1,
+				text: Array.from({ length: 60 }, (_, index) => `row ${String(index).padStart(3, "0")}`).join("\n"),
+			}),
+		);
+		const context = { ...cx, cols: 48 };
+		h.viewer.describe(context);
+		select(h.viewer, "tool-output/read");
+		expect(nativeText(h.viewer.describe(context))).toContain("row 059");
+		h.viewer.handleInput("\x1b[B");
+		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
+		h.render(48);
+		select(h.viewer, "tool-output/read");
+		h.viewer.handleInput("\x1b[B");
+		expect(h.render(48)[1]).toContain("row 000");
+		h.viewer.handleInput("\x1b[A");
+		expect(h.render(48)[1]).toContain("[scroll probe]");
+	});
+
 	it("opens a short multiline entry through Native activation and Enter, then returns to the same selection", () => {
 		const data = fixture({
 			id: "result/0",
