@@ -782,6 +782,7 @@ export class ContextViewer implements Component {
 		}
 		children.push(
 			actionBar([
+				null,
 				...(this.#state !== "overview" ? [actionButton("Back", "back")] : []),
 				actionButton("Close", "close"),
 			]),
