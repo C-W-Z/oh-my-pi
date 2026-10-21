@@ -14,7 +14,7 @@ import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keyb
 import { getKeybindings } from "../keybindings";
 import { col, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeScroll, NativeUiEvent } from "../native/node";
-import { actionBar, actionButton } from "../native/overlay";
+import { actionBar, actionButton, selectList } from "../native/overlay";
 import { styledSpans } from "../native/spans";
 import { PREVIEW_LIMITS, replaceTabs, shortenEmbeddedPaths, shortenPath } from "../render/render-utils";
 import {
@@ -715,38 +715,25 @@ export class ContextViewer implements Component {
 							? "□"
 							: "■"
 					: theme.symbol(presentation.symbol);
+				const value =
+					item.tokens === undefined ? "—" : `${formatNumber(item.tokens)} · ${this.#share(item.tokens)}`;
+				const label: TspSpan[] = [
+					span(`${item.child ? "  " : ""}${glyph} `, presentation.color),
+					span(this.#safe(item.label), selected ? `${presentation.color} strong` : undefined),
+				];
 				return node(
-					"row",
+					"item",
 					{
-						role: "omp.context.cat",
-						align: "center",
-						mark: selected ? "pick" : undefined,
-						actions: item.category ? { click: "select-category", dblclick: "open-category" } : undefined,
+						label,
+						value: selected ? [span(value, presentation.color)] : value,
 					},
-					[
-						text([span(glyph, presentation.color)], { role: "omp.context.swatch", wrap: "none" }),
-						text(
-							[
-								span(
-									`${item.child ? "  " : ""}${this.#safe(item.label)}`,
-									selected ? `${presentation.color} strong` : undefined,
-								),
-							],
-							{ role: "omp.context.label", grow: 1, wrap: "none", truncate: "end" },
-						),
-						text([span(item.value!.trim(), selected ? presentation.color : undefined)], {
-							role: "omp.context.tokens",
-							wrap: "none",
-						}),
-						text([span(item.share!.trim(), selected ? presentation.color : undefined)], {
-							role: "omp.context.share",
-							wrap: "none",
-						}),
-					],
+					undefined,
 					item.key,
 				);
 			});
-			const list = node("col", { grow: 1 }, items, "categories");
+			const list = meter
+				? node("list", { selected: this.#overview.selectedKey, grow: 1 }, items, "categories")
+				: selectList("categories", items, { selected: this.#overview.selectedKey, grow: 1 });
 			const geometry = meter ? undefined : this.#mapGeometry(this.#width, this.#height);
 			if (geometry) {
 				const cells = this.#mapCells(geometry.columns, geometry.rows);
@@ -851,19 +838,17 @@ export class ContextViewer implements Component {
 		if (event.type === "action") {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
-			else if (this.#state === "overview" && (event.act === "select-category" || event.act === "open-category")) {
-				const item = this.#overview.items.find(
-					item => event.key === `categories/${item.key}` || event.key.endsWith(`/categories/${item.key}`),
-				);
-				if (!item?.category) return;
-				this.#overview.setSelectedKey(item.key);
-				if (event.act === "open-category") this.#activate();
-			} else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
+			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
 				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
 				if (!entry) return;
 				this.#entries.setSelectedKey(entry.id);
 				if (event.act === "open-entry") this.#activate();
 			}
+		} else if (this.#state === "overview" && (event.type === "select" || event.type === "activate")) {
+			const item = this.#overview.items.find(item => item.key === event.item);
+			if (!item?.category) return;
+			this.#overview.setSelectedKey(event.item);
+			if (event.type === "activate") this.#activate();
 		}
 		this.#requestRender();
 	}

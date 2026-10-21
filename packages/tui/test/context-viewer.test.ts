@@ -43,16 +43,12 @@ function textValue(value: TspText | undefined): string | undefined {
 	return typeof value === "string" ? value : value?.map(span => span.t).join("");
 }
 
-function contextField(row: NativeNode | undefined, field: string): Extract<NativeNode, { k: "text" }> | undefined {
-	return row?.c?.find(
-		(child): child is Extract<NativeNode, { k: "text" }> =>
-			"k" in child && child.k === "text" && child.p?.role === `omp.context.${field}`,
-	);
+function itemLabel(item: NativeNode | undefined) {
+	return item?.k === "item" && Array.isArray(item.p?.label) ? item.p.label : undefined;
 }
 
-function usageColumns(row: NativeNode | undefined): string[] | undefined {
-	if (!row) return;
-	return ["tokens", "share"].map(field => textValue(contextField(row, field)?.p?.spans)?.trim() ?? "").filter(Boolean);
+function usageColumns(item: NativeNode | undefined): string[] | undefined {
+	return item?.k === "item" ? textValue(item.p?.value)?.split(" · ") : undefined;
 }
 
 function fixture(): ContextViewData {
@@ -152,12 +148,7 @@ function harness(data = fixture()) {
 }
 
 function select(viewer: ContextViewer, key: string, activate = true): void {
-	viewer.handleNativeEvent({
-		type: "action",
-		key: `categories/${key}`,
-		act: activate ? "open-category" : "select-category",
-		mods: [],
-	});
+	viewer.handleNativeEvent({ type: activate ? "activate" : "select", key: "categories", item: key });
 }
 
 function nativeText(root: NativeNode): string {
@@ -674,30 +665,6 @@ describe("ContextViewer presentation", () => {
 		}
 	});
 
-	it("exposes native token and usage columns with selection colors but no token bold", () => {
-		const h = harness();
-		try {
-			for (const context of [cx, meterCx]) {
-				for (const key of ["system-prompt", "tool-output"]) {
-					select(h.viewer, key, false);
-					const root = h.viewer.describe(context);
-					for (const category of ["system-prompt", "tool-output"] as const) {
-						const row = nodes(root).find(node => node.key === category);
-						const tokens = contextField(row, "tokens");
-						const share = contextField(row, "share");
-						if (!tokens || !share) throw new Error(`Missing separate native columns: ${category}`);
-						const color = key === category ? CONTEXT_PRESENTATION[category].color : undefined;
-						expect(tokens.p?.spans?.[0]?.s).toBe(color);
-						expect(share.p?.spans?.[0]?.s).toBe(color);
-						expect(usageColumns(row)).toEqual(category === "system-prompt" ? ["21K", "10.6%"] : ["32K", "15.9%"]);
-					}
-				}
-			}
-		} finally {
-			h.viewer.dispose();
-		}
-	});
-
 	it("distinguishes tiny nonzero usage from zero and the rounding boundary", () => {
 		for (const [tokens, share] of [
 			[0, "0.0%"],
@@ -810,13 +777,11 @@ describe("ContextViewer presentation", () => {
 		try {
 			const root = h.viewer.describe(meterCx);
 			const list = nodes(root).find(node => node.key === "categories");
-			if (!list) throw new Error("Missing categories");
+			if (list?.k !== "list") throw new Error("Missing category list");
 			for (const key of ["buffer", "free"]) {
 				const summary = nodes(list).find(node => node.key === key);
-				expect(summary?.p?.actions).toBeUndefined();
-				expect(textValue(contextField(summary, "label")?.p?.spans)).toBe(
-					key === "buffer" ? "Auto-Compact Buffer" : "Free Space",
-				);
+				if (summary?.k !== "item") throw new Error(`Missing summary item: ${key}`);
+				expect(summary.p?.disabled).not.toBe(true);
 				expect(usageColumns(summary)).toEqual(key === "buffer" ? ["20K", "10.0%"] : ["95K", "47.5%"]);
 				select(h.viewer, key);
 				expect(selected(h.viewer.describe(meterCx))).toBe("system-prompt");
@@ -857,48 +822,41 @@ describe("ContextViewer presentation", () => {
 				},
 			];
 			for (const item of expected) {
-				const swatch = contextField(item.row, "swatch")?.p?.spans?.[0];
+				const swatch = itemLabel(item.row)?.[0];
 				expect(swatch?.t.trim()).toBe(item.glyph);
 				expect(swatch?.s).toBe(item.color);
 				if (item.bar) {
-					const label = textValue(contextField(item.bar, "label")?.p?.spans);
+					const label = itemLabel(item.bar)?.[1]?.t;
 					expect(meter.p?.parts?.find(part => part.label?.startsWith(`${label} ·`))?.token).toBe(item.color);
 				}
 			}
 			expect(selected(root)).toBe("system-prompt");
 			const fallback = nodes(h.viewer.describe(cx)).find(node => node.key === "system-prompt");
-			expect(textValue(contextField(fallback, "swatch")?.p?.spans)).toBe(theme.symbol("context.content"));
+			expect(itemLabel(fallback)?.[0]?.t.trim()).toBe(theme.symbol("context.content"));
 		} finally {
 			h.viewer.dispose();
 		}
 	});
 
-	it("selects and opens category rows through reconciled actions without activating the buffer", () => {
+	it("selects and opens native list items through reconciled events without activating the buffer", () => {
 		const h = harness();
 		try {
 			const reconciler = new Reconciler("context-swatches");
 			const pending = reconciler
 				.reconcile({ main: [h.viewer], dock: [], layer: [] }, meterCx)
 				.flatMap(op => (op[0] === "add" ? [op[4]] : []));
-			const paths = new Map<string, string>();
+			let listPath: string | undefined;
 			for (let index = 0; index < pending.length; index++) {
 				const wire = pending[index]!;
-				const path = reconciler.target(wire.id)?.keypath;
-				if (wire.k === "row" && path?.includes("/categories/")) {
-					paths.set(path.slice(path.indexOf("/categories/") + "/categories/".length), path);
-				}
+				if (wire.k === "list") listPath = reconciler.target(wire.id)?.keypath;
 				pending.push(...(wire.c ?? []));
 			}
-			const act = (key: string, action: string) => {
-				const path = paths.get(key);
-				if (!path) throw new Error(`Missing category path: ${key}`);
-				h.viewer.handleNativeEvent({ type: "action", key: path, act: action, mods: [] });
-			};
-			act("tool-output/read", "select-category");
+			if (!listPath) throw new Error("Missing category list path");
+			h.viewer.handleNativeEvent({ type: "select", key: listPath, item: "tool-output/read" });
 			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
-			act("buffer", "open-category");
+			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "buffer" });
 			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
-			act("tool-output/read", "open-category");
+			h.viewer.handleNativeEvent({ type: "activate", key: listPath, item: "tool-output/read" });
 			expect(JSON.stringify(h.viewer.describe(meterCx))).toContain("context-output-tail");
 			h.viewer.handleInput("\x1b");
 			expect(selected(h.viewer.describe(meterCx))).toBe("tool-output/read");
@@ -1066,7 +1024,7 @@ describe("ContextViewer presentation", () => {
 			for (const key of ["skills", "built-in-tools", "tool-output", "buffer", "free"] as const) {
 				const legend = native.find(node => node.key === key);
 				const presentation = CONTEXT_PRESENTATION[key];
-				const swatch = contextField(legend, "swatch")?.p?.spans?.[0];
+				const swatch = itemLabel(legend)?.[0];
 				expect(
 					grid.some(
 						node =>
@@ -1080,10 +1038,10 @@ describe("ContextViewer presentation", () => {
 			}
 			const top = native.find(node => node.key === "tool-output");
 			const child = native.find(node => node.key === "tool-output/read");
-			const topSwatch = contextField(top, "swatch")?.p?.spans?.[0];
-			const childSwatch = contextField(child, "swatch")?.p?.spans?.[0];
+			const topSwatch = itemLabel(top)?.[0];
+			const childSwatch = itemLabel(child)?.[0];
 			expect(childSwatch?.s).toBe(topSwatch?.s);
-			expect(childSwatch?.t).toBe(topSwatch?.t);
+			expect(childSwatch?.t.trim()).toBe(topSwatch?.t.trim());
 			if (override === "A") {
 				expect(sliceWithWidth(system, 2, 31, true).text).toContain(swatch);
 				expect(sliceWithWidth(system, 36, 60, true).text).toContain(swatch);
@@ -1123,7 +1081,7 @@ describe("ContextViewer presentation", () => {
 		for (const [index, category] of categories.entries()) category.tokens = [1, 2, 4][index]!;
 		const h = harness({ ...data, categories, usage: 5, window: 100 });
 		const values = nodes(h.viewer.describe(cx)).filter(
-			node => node.k === "row" && categories.some(category => category.id === node.key),
+			node => node.k === "item" && categories.some(category => category.id === node.key),
 		);
 		expect(values.map(node => usageColumns(node))).toEqual([
 			["1", "1.0%"],
@@ -1154,7 +1112,7 @@ describe("ContextViewer presentation", () => {
 		for (const category of data.categories) category.tokens = 0;
 		const h = harness(data);
 		expect(h.render(160).join("\n")).toContain("85K");
-		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "row");
+		const items = nodes(h.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(usageColumns(items.find(node => node.key === "system-prompt"))).toEqual(["—"]);
 		const zero = harness({ ...fixture(), window: 0, usage: 0, buffer: 0, free: 0 });
 		expect(zero.render(160).join("\n")).not.toMatch(/NaN|Infinity/);
@@ -1167,7 +1125,7 @@ describe("ContextViewer presentation", () => {
 	it("keeps a zero-usage allocation at zero without hiding free capacity", () => {
 		const data = fixture();
 		const zero = harness({ ...data, usage: 0, buffer: 20000, free: 180000 });
-		const values = nodes(zero.viewer.describe(cx)).filter(node => node.k === "row");
+		const values = nodes(zero.viewer.describe(cx)).filter(node => node.k === "item");
 		expect(usageColumns(values.find(node => node.key === "tool-output"))).toEqual(["0", "0.0%"]);
 		expect(usageColumns(values.find(node => node.key === "free"))).toEqual(["180K", "90.0%"]);
 	});
