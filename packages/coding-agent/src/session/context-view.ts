@@ -1,4 +1,5 @@
-import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { AgentMessage, Tokenizer } from "@oh-my-pi/pi-agent-core";
+import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { renderToolExamples } from "@oh-my-pi/pi-ai/dialect";
 import { isSurvivingAssistant } from "@oh-my-pi/pi-ai/providers/transform-messages";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
@@ -46,6 +47,48 @@ function contentText(content: unknown): string {
 			return `[${facts.join(" · ")}]`;
 		})
 		.join("\n");
+}
+
+interface AssistantBlockEstimate {
+	blockTokens: number[];
+	reasoningCount: number;
+	reasoningBudget: number;
+	interrupted: boolean;
+}
+
+function estimateAssistantBlocks(
+	message: AssistantMessage,
+	tokenizer: Tokenizer,
+	isLatestSurviving: boolean,
+): AssistantBlockEstimate {
+	// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
+	let reasoningCount = 0;
+	const blockTokens = message.content.map(block => {
+		if (block.type === "text") return tokenizer.countTokens(block.text);
+		if (block.type === "toolCall") {
+			try {
+				return tokenizer.countTokens([block.name, JSON.stringify(block.arguments) ?? "null"]);
+			} catch {
+				return tokenizer.countTokens(block.name);
+			}
+		}
+		if (block.type === "thinking" || block.type === "redactedThinking") {
+			reasoningCount++;
+			return 0;
+		}
+		const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
+		return tokenizer.countMessages([isolated]);
+	});
+	const messageTokens = isLatestSurviving ? tokenizer.countLatestTurn(message) : tokenizer.countMessage(message);
+	const reasoningBudget = Math.max(0, messageTokens - blockTokens.reduce((sum, tokens) => sum + tokens, 0));
+	const interrupted =
+		message.stopReason === "aborted" &&
+		reasoningBudget === 0 &&
+		message.usage.output === 0 &&
+		message.usage.reasoningTokens === undefined &&
+		!message.providerPayload &&
+		message.content.every(block => block.type === "thinking" && !block.thinking.trim());
+	return { blockTokens, reasoningCount, reasoningBudget, interrupted };
 }
 
 /** Sample once on open without session hooks, provider transforms, or file I/O. */
@@ -123,36 +166,11 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 				? `${original.role}${"customType" in original ? ` · ${original.customType}` : ""}${message.role !== original.role ? ` → ${message.role}` : ""}`
 				: undefined;
 		if (message.role === "assistant") {
-			// Count reasoning replay once; text and calls do not inherit the provider's whole-turn usage.
-			let reasoningCount = 0;
-			const blockTokens = message.content.map(block => {
-				if (block.type === "text") return tokenizer.countTokens(block.text);
-				if (block.type === "toolCall") {
-					try {
-						return tokenizer.countTokens([block.name, JSON.stringify(block.arguments) ?? "null"]);
-					} catch {
-						return tokenizer.countTokens(block.name);
-					}
-				}
-				if (block.type === "thinking" || block.type === "redactedThinking") {
-					reasoningCount++;
-					return 0;
-				}
-				const isolated: AgentMessage = { ...message, providerPayload: undefined, content: [block] };
-				return tokenizer.countMessages([isolated]);
-			});
-			const messageTokens =
-				convertedIndex === latestAssistantIndex
-					? tokenizer.countLatestTurn(message)
-					: tokenizer.countMessage(message);
-			const reasoningBudget = Math.max(0, messageTokens - blockTokens.reduce((sum, tokens) => sum + tokens, 0));
-			const interrupted =
-				message.stopReason === "aborted" &&
-				reasoningBudget === 0 &&
-				message.usage.output === 0 &&
-				message.usage.reasoningTokens === undefined &&
-				!message.providerPayload &&
-				message.content.every(block => block.type === "thinking" && !block.thinking.trim());
+			const { blockTokens, reasoningCount, reasoningBudget, interrupted } = estimateAssistantBlocks(
+				message,
+				tokenizer,
+				convertedIndex === latestAssistantIndex,
+			);
 			const thinkingGroup: ContextThinkingGroup | undefined =
 				reasoningCount > 1
 					? {
