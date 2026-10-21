@@ -48,15 +48,6 @@ function contentText(content: unknown): string {
 		.join("\n");
 }
 
-/** Format retained server-tool metadata without filtering provider fields. */
-function serverToolText(block: unknown): string {
-	try {
-		return JSON.stringify(block, null, 2) ?? "";
-	} catch {
-		return "[Content unavailable]";
-	}
-}
-
 /** Sample once on open without session hooks, provider transforms, or file I/O. */
 export function buildSessionContextView(session: AgentSession): ContextViewData {
 	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
@@ -195,11 +186,17 @@ export function buildSessionContextView(session: AgentSession): ContextViewData 
 							(retained.type === "web_search_tool_result" ? "web_search" : "tool_search"));
 					if (isCall) serverToolNames.set(callId, name);
 					const category = isCall ? "tool-calls" : "tool-output";
+					let text: string;
+					try {
+						text = JSON.stringify(retained, null, 2) ?? "";
+					} catch {
+						text = "[Content unavailable]";
+					}
 					const entry: ContextViewEntry = {
 						id: `${category}/${prefix}/${blockIndex}`,
 						label: name,
 						info,
-						text: serverToolText(retained),
+						text,
 						timestamp: original.timestamp,
 						callId,
 						tokens: blockTokens[blockIndex]!,

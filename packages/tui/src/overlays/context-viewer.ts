@@ -323,9 +323,6 @@ export class ContextViewer implements Component {
 		return this.#safe(shortenPath(entry.label)).replace(/\n/g, " ");
 	}
 
-	#entryInfo(entry: ContextViewEntry): string {
-		return this.#safe([entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "));
-	}
 	#tokenEstimate(item: ContextViewEntry | ContextThinkingGroup): string {
 		if ("thinkingGroup" in item && item.thinkingGroup) return "—";
 		if (item.interrupted) return "N/A · Interrupted";
@@ -342,11 +339,14 @@ export class ContextViewer implements Component {
 
 	#entryMetadata(entry: ContextViewEntry, preview = false): string[] {
 		const group = entry.thinkingGroup;
+		const info = this.#safe(
+			[entry.info, entry.path ? shortenPath(entry.path) : undefined].filter(Boolean).join(" · "),
+		);
 		return [
 			group && !preview
 				? `${this.#safe(group.label).replace(/\n/g, " ")} · ${this.#tokenEstimate(group)}`
 				: undefined,
-			this.#entryInfo(entry) || undefined,
+			info || undefined,
 			entry.callId !== undefined ? `Call ID: ${this.#safe(entry.callId)}` : undefined,
 			entry.timestamp !== undefined
 				? `${new Date(entry.timestamp).toLocaleString([], {
