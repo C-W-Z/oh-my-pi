@@ -133,9 +133,7 @@ export class ContextViewer implements Component {
 	#previewCache:
 		| { category: ContextViewCategory; width: number; height: number; lines: string[]; ranges: EntryRange[] }
 		| undefined;
-	#fullCache: { entry: ContextViewEntry; width: number } | undefined;
-	#wrapped = new Map<string, { width: number; lines: string[] }>();
-	#safeEntries = new Map<string, string>();
+	#preparedFull: { entry: ContextViewEntry; width: number; text: string } | undefined;
 	// Native scroll requests, not a viewport offset. The reconciler repeats each
 	// line step by the increment in `n`.
 	#nativeScroll: NativeScroll = { by: "start", n: 0 };
@@ -236,16 +234,13 @@ export class ContextViewer implements Component {
 
 	invalidate(): void {
 		this.#previewCache = undefined;
-		this.#fullCache = undefined;
-		this.#wrapped.clear();
-		this.#safeEntries.clear();
+		this.#preparedFull = undefined;
 		this.#panel.invalidate();
 	}
 
 	dispose(): void {
 		this.#disposed = true;
-		this.#wrapped.clear();
-		this.#safeEntries.clear();
+		this.#preparedFull = undefined;
 		this.#overviewScroll.dispose();
 		this.#previewScroll.dispose();
 		this.#fullScroll.dispose();
@@ -276,25 +271,6 @@ export class ContextViewer implements Component {
 
 	#safeContent(value: string): string {
 		return replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n")));
-	}
-
-	#entryText(entry: ContextViewEntry): string {
-		let value = this.#safeEntries.get(entry.id);
-		if (value === undefined) {
-			value = this.#safeContent(entry.text);
-			this.#safeEntries.set(entry.id, value);
-		}
-		return value;
-	}
-
-	#entryLines(entry: ContextViewEntry, width: number): string[] {
-		const cached = this.#wrapped.get(entry.id);
-		if (cached?.width === width) return cached.lines;
-		const lines = this.#entryText(entry)
-			.split("\n")
-			.flatMap(line => (line ? wrapTextWithAnsi(line, Math.max(1, width)) : [""]));
-		this.#wrapped.set(entry.id, { width, lines });
-		return lines;
 	}
 
 	/** Wrap only a bounded preview prefix. */
@@ -560,20 +536,21 @@ export class ContextViewer implements Component {
 		return [...this.#fullScroll.render(width)];
 	}
 
-	#prepareFull(width: number, height: number): void {
+	#prepareFull(width: number, height: number): string {
 		const entry = this.#entry!;
 		this.#fullScroll.setHeight(height);
-		if (this.#fullCache?.entry !== entry || this.#fullCache.width !== width) {
+		if (this.#preparedFull?.entry !== entry || this.#preparedFull.width !== width) {
+			const content = this.#safeContent(entry.text);
+			const contentWidth = Math.max(1, width - 1);
 			const lines = [
-				truncateToWidth(this.#entryHeaderLine(entry), Math.max(1, width - 1)),
-				...this.#entryMetadata(entry).flatMap(line =>
-					wrapTextWithAnsi(theme.fg("dim", line), Math.max(1, width - 1)),
-				),
-				...this.#entryLines(entry, Math.max(1, width - 1)),
+				truncateToWidth(this.#entryHeaderLine(entry), contentWidth),
+				...this.#entryMetadata(entry).flatMap(line => wrapTextWithAnsi(theme.fg("dim", line), contentWidth)),
+				...content.split("\n").flatMap(line => (line ? wrapTextWithAnsi(line, contentWidth) : [""])),
 			];
-			this.#fullCache = { entry, width };
+			this.#preparedFull = { entry, width, text: content };
 			this.#fullScroll.setLines(lines);
 		}
+		return this.#preparedFull.text;
 	}
 
 	render(width: number): readonly string[] {
@@ -645,15 +622,19 @@ export class ContextViewer implements Component {
 	#openEntry(entry: ContextViewEntry, parent: "overview" | "category"): void {
 		this.#entry = entry;
 		this.#entryParent = parent;
-		this.#fullCache = undefined;
+		this.#preparedFull = undefined;
 		this.#fullScroll.scrollToTop();
 		this.#state = "entry";
 		if (this.#width > 0) this.#prepareFull(this.#width, this.#height);
 	}
 
 	#back(): void {
-		if (this.#state === "entry") this.#state = this.#entryParent;
-		else if (this.#state === "category") this.#state = "overview";
+		if (this.#state === "entry") {
+			this.#state = this.#entryParent;
+			this.#entry = undefined;
+			this.#preparedFull = undefined;
+			this.#fullScroll.setLines([]);
+		} else if (this.#state === "category") this.#state = "overview";
 		else this.#close();
 	}
 
@@ -806,13 +787,13 @@ export class ContextViewer implements Component {
 				scroll: this.#nativeScroll,
 			});
 		} else {
-			this.#prepareFull(this.#width, this.#height);
+			const content = this.#prepareFull(this.#width, this.#height);
 			const body = node(
 				"col",
 				{},
 				[
 					...this.#entryMetadata(this.#entry!).map(line => text([span(this.#safe(line), "dim")])),
-					text(styledSpans(this.#entryText(this.#entry!)), { wrap: "word" }),
+					text(styledSpans(content), { wrap: "word" }),
 				],
 				`entry-${this.#entry!.id}`,
 			);
