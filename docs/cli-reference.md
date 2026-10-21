@@ -66,66 +66,33 @@ Argument handling:
 
 ### Interactive context viewer
 
-`/context` opens a read-only snapshot of the active context: the current system
-prompt, active tools, and live messages, with a separate Skills token estimate.
-The viewer's independent conversion entry point shares the base `convertToLlm`
-conversion core without reading or populating production conversion caches.
-Source and converted-message indices preserve attribution across omitted inputs
-and one-to-many outputs. Interrupted-thinking continuity, refusal handling, and
-tool-name canonicalization follow the same conversion rules.
+`/context` opens a read-only snapshot of the active system prompt, tools, and
+messages. It deliberately skips extension hooks, including `context` and
+`before_provider_request`, so inspecting context cannot trigger their side
+effects. It is not the raw transcript or an exact preview of the next provider
+request: request transforms, provider encoding, and image processing are also
+not applied. Token counts and category shares are estimates.
 
-This is not the raw transcript, the last request, or an exact preview of the next
-provider payload. Opening the viewer does not run extension `context` or
-`before_provider_request` hooks, configured request transforms, or provider
-encoding. Image processing, Snapcompact rasterization, blob uploads, and date/cwd
-injection are outside the base message projection. Category token counts and
-allocation shares are estimates, not exact final wire counts.
-Snapcompact's post-conversion token total is an estimate, not a prediction of the
-next provider request's exact size.
+System Prompt entries include loaded instruction files and skill descriptions.
+Skills is a separate, estimate-only row; its estimate excludes hidden or
+unavailable skills and is subtracted from the System Prompt estimate to avoid
+double-counting.
 
-System Prompt entries show the full effective prompt blocks, including loaded
-instruction files and skill descriptions. Skills is an estimate-only overview row
-and cannot be opened. Its estimate uses the same exposed skill names and
-descriptions as the context usage display, excluding hidden skills and skills
-unavailable to the active tool roster. The System Prompt estimate subtracts the
-Skills estimate to avoid counting it twice.
+Thinking estimates include replayable provider reasoning. Retained Anthropic
+web-search and tool-search calls and their results appear in Tool Calls and Tool
+Output, with readable arguments and metadata. Encoded payloads, signatures, and
+other hard-to-read replay fields are omitted for readability; this does not
+change token estimates.
 
-Assistant Thinking includes reasoning retained only in replayable provider
-payloads, displayed as an encoded-thinking placeholder without exposing payloads
-or signatures. Counts follow the active reader's replay-aware tokenizer, exclude
-reasoning it filters or cannot replay, and do not double-count payload reasoning
-already attributed to explicit thinking blocks.
-The latest surviving assistant turn uses the reader's latest-turn replay pricing,
-including signed thinking retained by Anthropic after abandoned tool calls.
+Use the configured `tui.select.up` / `tui.select.down` keys to select and scroll,
+`tui.select.confirm` to open an entry, and `tui.select.cancel` to go back or
+close. They default to Up/Down, Enter, and Esc; configure other keys in
+`keybindings.yml`. In native previews, click to select and double-click to open.
+Closing full-content view restores the previous selection and scroll position.
+Truncated previews show `… more`; confirm to inspect the full entry.
 
-Retained Anthropic web-search and tool-search calls appear in Tool Calls, with
-their results grouped in Tool Output by tool name and linked by call ID. Readable
-arguments and result metadata are shown; encrypted replay content and signatures
-are omitted from the viewer without changing token estimates or saved messages.
-
-Use only the configured `tui.select.up` / `tui.select.down` keys (arrow keys by
-default) to select and scroll. To use `k`/`j`, bind them to these actions in
-`keybindings.yml`; they are not fixed aliases. The footer shows each action's
-primary bound key, omits unbound actions, and shows open only when content can be
-opened. Open content with `tui.select.confirm` (Enter by default); go back or close with `tui.select.cancel`
-(Esc or Ctrl+C by default). Enter and Esc are not fixed aliases.
-Oversized entries scroll one line at a time before selection advances. The viewer
-does not handle `tui.select.pageUp` / `tui.select.pageDown` or fixed Home/End
-shortcuts; those physical keys work only if explicitly bound to a supported action.
-These bindings accept multiple keys or `[]` to disable the keyboard action.
 Browsing does not submit the composer draft or interrupt a background turn. The
-snapshot stays unchanged while open; close and reopen it to refresh.
-
-The confirm action opens the selected entry's full content even when its preview
-fits. Native category previews use wrapping text blocks: click a block to select
-it and double-click to open it. Back or the configured cancel action from full
-content restores the category's selection and preview position. Native buttons
-and activation remain available when the corresponding keyboard actions are
-unbound. Empty inspectable categories remain accessible; categories with one entry
-open full content directly. Skills remains estimate-only.
-
-Truncated entry previews show `… more` instead of an omitted-line count; use the
-confirm action to inspect the full entry.
+snapshot does not refresh while open; close and reopen it to update.
 
 ### Launch flags
 

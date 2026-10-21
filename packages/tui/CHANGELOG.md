@@ -4,26 +4,10 @@
 
 ### Added
 
-- Added an ANSI and native Context Viewer with category navigation, wrapped entry previews, scrollable full-content inspection, and in-entry scrolling ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Added context usage and compaction diagnostics, preserving original Used, Buffer, and Free totals while showing estimated category token shares, compaction thresholds, and potential Snapcompact savings ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Added theme-colored category highlights and entry headings, bounded ANSI previews with omitted-line counts, and contextual navigation hints ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Context Viewer entries show their originating message's localized date and time, and Tool Output entries identify their tool call in dim metadata ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Context Viewer uses configured up/down shortcuts for single-line navigation and scrolling, with no separate page or boundary shortcuts; open and back/close shortcuts and hints honor configured or unbound keys without fixed aliases ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Context Viewer previews mark omitted content with `… more` instead of counting hidden lines.
-- Context Viewer keeps Skills as a non-interactive token estimate; full skill and instruction text is inspectable in System Prompt.
-- `AutocompleteItem.descriptionMatch` marks a slash command matched only through its description; `Editor` Enter no longer applies such a row unless the user moved the selection onto it ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
+- Added an ANSI and native `/context` viewer with category navigation, content inspection, token-usage and compaction estimates, and keyboard/mouse controls that adapt across Tern and other terminals ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 
 ### Fixed
 
-- `/context` shows token counts and usage percentages in separate aligned columns, uses Tern's normal token contrast without bold, preserves category colors when selected, and shows tiny nonzero usage as `<0.1%`.
-- Tern `/context` category and content pages show the active category in the title without repeating it above the content; the overview title shows the model and non-Tern terminals keep their existing headings.
-- Context Viewer truncation hints show the configured confirm key and omit the action when that keybinding is disabled.
-- Empty Context Viewer categories omit the inactive open hint; unavailable context-window warnings identify the missing capacity, and Snapcompact totals are labeled as estimates rather than the next request's size.
-- Native `/context` shows usage and compaction totals even without meter support or category token weights.
-- `/context` in Tern shows the model in its title and a prominent used-token total above the stacked usage bar, without snapshot boilerplate; terminals without native meters retain the context map ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- `/context` on non-Tern terminals shows the model in its overview title and a two-line usage and compaction summary only in the overview, without duplicate compaction details below the categories or summary text on content pages ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Tern context categories are selectable rows with colored square markers matching the usage bar; the auto-compaction buffer is hatched and free space has an empty marker ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
-- Tern `/context` keeps auto-compaction buffer and free-space totals at normal text contrast, ignores attempts to open them, and uses right-aligned footer buttons without an extra divider ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 - Fixed the composer caret drifting one cell left per pasted image or video chip in terminals that draw the chip icon as a wide emoji (JetBrains terminal); the `unicode` preset now uses `📷`/`🎬` chip icons ([#16270](https://github.com/can1357/oh-my-pi/issues/16270))
 - Fixed Tern hiding user text sent with `/skill:<name>` inside a collapsed skill card; only the loaded skill prompt is hidden ([#16311](https://github.com/can1357/oh-my-pi/issues/16311))
 
