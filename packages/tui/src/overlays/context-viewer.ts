@@ -111,7 +111,7 @@ export class ContextViewer implements Component {
 	readonly #getRows: () => number;
 	readonly #overview: MenuSelection<OverviewRow>;
 	readonly #overviewScroll = new ScrollView([], { height: 1 });
-	readonly #previewScroll = new ScrollView([], { height: 1 });
+	readonly #ansiPreviewScroll = new ScrollView([], { height: 1 });
 	readonly #ansiEntryScroll = new ScrollView([], { height: 1 });
 	readonly #panel = new OverlayPanel("Context");
 	readonly #allocated = new Map<ContextViewCategory, number>();
@@ -132,7 +132,7 @@ export class ContextViewer implements Component {
 	#height = 1;
 	// Only ANSI input needs local full-content scroll geometry.
 	#lastRenderMode: "ansi" | "native" = "ansi";
-	#previewCache:
+	#ansiPreviewCache:
 		| { category: ContextViewCategory; width: number; height: number; lines: string[]; ranges: EntryRange[] }
 		| undefined;
 	#entryBodyCache: { entry: ContextViewEntry; text: string } | undefined;
@@ -236,7 +236,7 @@ export class ContextViewer implements Component {
 	}
 
 	invalidate(): void {
-		this.#previewCache = undefined;
+		this.#ansiPreviewCache = undefined;
 		this.#entryBodyCache = undefined;
 		this.#ansiEntryLayoutWidth = undefined;
 		this.#panel.invalidate();
@@ -247,7 +247,7 @@ export class ContextViewer implements Component {
 		this.#entryBodyCache = undefined;
 		this.#ansiEntryLayoutWidth = undefined;
 		this.#overviewScroll.dispose();
-		this.#previewScroll.dispose();
+		this.#ansiPreviewScroll.dispose();
 		this.#ansiEntryScroll.dispose();
 		this.#panel.dispose();
 	}
@@ -278,23 +278,48 @@ export class ContextViewer implements Component {
 		return replaceTabs(sanitizeText(value.replace(/\r\n?/g, "\n")));
 	}
 
-	/** Wrap only a bounded preview prefix. */
-	#entryPreview(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
-		const prefixLength = Math.min(entry.text.length, Math.max(1, width) * budget * 2);
-		const paragraphs = this.#safeContent(entry.text.slice(0, prefixLength)).split("\n");
+	#previewBudget(entry: ContextViewEntry): number {
+		const reserved = entry.thinkingGroup ? 3 : 2; // Heading, open hint, and optional group heading.
+		return Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, this.#height - reserved));
+	}
+
+	/** Bound the source prefix; each renderer applies its own visual-line budget. */
+	#previewContent(entry: ContextViewEntry, budget: number): { metadata: string; body: string; complete: boolean } {
+		const maxChars = Math.max(1, this.#width) * budget * 2;
+		const metadata = this.#entryMetadata(entry, true).join("\n");
+		const metadataLength = Math.min(metadata.length, maxChars);
+		const body = entry.text;
+		const bodyLength = Math.min(body.length, Math.max(0, maxChars - metadataLength - (metadataLength ? 1 : 0)));
+		return {
+			metadata: this.#safeContent(metadata.slice(0, metadataLength)),
+			body: this.#safeContent(body.slice(0, bodyLength)),
+			complete: metadataLength === metadata.length && bodyLength === body.length,
+		};
+	}
+
+	#ansiPreviewLines(entry: ContextViewEntry, width: number, budget: number): { lines: string[]; complete: boolean } {
+		const content = this.#previewContent(entry, budget);
 		const lines: string[] = [];
-		let complete = prefixLength === entry.text.length;
-		for (const [index, paragraph] of paragraphs.entries()) {
-			const wrapped = paragraph ? wrapTextWithAnsi(paragraph, Math.max(1, width)) : [""];
-			const remaining = budget - lines.length;
-			lines.push(...wrapped.slice(0, remaining));
-			if (wrapped.length > remaining) {
-				complete = false;
-				break;
-			}
-			if (lines.length === budget) {
-				if (index < paragraphs.length - 1) complete = false;
-				break;
+		let complete = content.complete;
+		parts: for (const [value, body] of [
+			[content.metadata, false],
+			[content.body, true],
+		] as const) {
+			if (!value) continue;
+			for (const paragraph of value.split("\n")) {
+				const remaining = budget - lines.length;
+				if (remaining === 0) {
+					complete = false;
+					break parts;
+				}
+				const prefix = body ? "  " : "";
+				const styled = body ? paragraph : theme.fg("dim", paragraph);
+				const wrapped = paragraph ? wrapTextWithAnsi(styled, Math.max(1, width - prefix.length)) : [""];
+				lines.push(...wrapped.slice(0, remaining).map(line => `${prefix}${line}`));
+				if (wrapped.length > remaining) {
+					complete = false;
+					break parts;
+				}
 			}
 		}
 		return { lines, complete };
@@ -360,12 +385,13 @@ export class ContextViewer implements Component {
 		);
 	}
 
-	#truncationMarker(selected: boolean): string {
+	#previewHint(selected: boolean, truncated: boolean): string {
 		const confirm = selected ? editorKey("tui.select.confirm") : "";
-		return (
-			theme.fg("dim", "  … more") +
-			(confirm ? theme.fg("dim", " · ") + theme.fg("accent", `${confirm} View Content`) : "")
-		);
+		const parts = [
+			truncated ? theme.fg("dim", "… more") : "",
+			confirm ? theme.fg("accent", `${confirm} View Content`) : "",
+		].filter(Boolean);
+		return parts.length ? `  ${parts.join(theme.fg("dim", " · "))}` : "";
 	}
 
 	#share(tokens: number): string {
@@ -478,10 +504,10 @@ export class ContextViewer implements Component {
 		return lines;
 	}
 
-	#preparePreview(width: number, height: number): void {
+	#prepareAnsiPreview(width: number, height: number): void {
 		const category = this.#category!;
-		const cached = this.#previewCache;
-		this.#previewScroll.setHeight(height);
+		const cached = this.#ansiPreviewCache;
+		this.#ansiPreviewScroll.setHeight(height);
 		if (cached?.category === category && cached.width === width && cached.height === height) return;
 		const lines: string[] = [];
 		const ranges: EntryRange[] = [];
@@ -496,42 +522,36 @@ export class ContextViewer implements Component {
 			}
 			const entryWidth = Math.max(1, width - 1 - indent.length);
 			lines.push(`${indent}${truncateToWidth(this.#entryHeaderLine(entry), entryWidth)}`);
-			lines.push(
-				...this.#entryMetadata(entry, true).flatMap(line =>
-					wrapTextWithAnsi(theme.fg("dim", line), entryWidth).map(line => `${indent}${line}`),
-				),
-			);
-			const budget = Math.max(1, Math.min(PREVIEW_LIMITS.OUTPUT_EXPANDED, height - 2));
-			const content = this.#entryPreview(entry, Math.max(1, width - 3 - indent.length), budget);
-			lines.push(...content.lines.map(line => `${indent}  ${line}`));
-			if (!content.complete) lines.push(this.#truncationMarker(false));
+			const content = this.#ansiPreviewLines(entry, entryWidth, this.#previewBudget(entry));
+			lines.push(...content.lines.map(line => `${indent}${line}`));
+			if (!content.complete) lines.push(this.#previewHint(false, true));
 			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");
 		}
 		if (lines.length === 0) lines.push("No content in this category.");
-		this.#previewCache = { category, width, height, lines, ranges };
-		this.#previewScroll.setLines(lines);
+		this.#ansiPreviewCache = { category, width, height, lines, ranges };
+		this.#ansiPreviewScroll.setLines(lines);
 	}
 
-	#revealPreview(width: number, height: number): EntryRange | undefined {
-		this.#preparePreview(width, height);
-		const range = this.#previewCache!.ranges[this.#entries.selectedIndex];
+	#revealAnsiPreview(width: number, height: number): EntryRange | undefined {
+		this.#prepareAnsiPreview(width, height);
+		const range = this.#ansiPreviewCache!.ranges[this.#entries.selectedIndex];
 		if (range)
-			this.#previewScroll.revealRange(
+			this.#ansiPreviewScroll.revealRange(
 				{ id: this.#entries.selectedKey!, start: range.start, end: range.end, margin: 0, oversized: "start" },
 				width,
 			);
 		return range;
 	}
 
-	#previewLines(width: number, height: number): string[] {
+	#renderAnsiPreview(width: number, height: number): string[] {
 		const contentWidth = Math.max(1, width - 2);
-		const range = this.#revealPreview(contentWidth, height);
-		const offset = this.#previewScroll.getScrollOffset();
-		return this.#previewScroll.render(contentWidth).map((line, index) => {
+		const range = this.#revealAnsiPreview(contentWidth, height);
+		const offset = this.#ansiPreviewScroll.getScrollOffset();
+		return this.#ansiPreviewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
 			if (selected && !range.complete && offset + index === range.end - 1)
-				line = truncateToWidth(this.#truncationMarker(true), contentWidth - 1);
+				line = truncateToWidth(this.#previewHint(true, true), contentWidth - 1);
 			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
 		});
 	}
@@ -581,7 +601,7 @@ export class ContextViewer implements Component {
 			this.#state === "overview"
 				? this.#overviewLines(this.#width, this.#height)
 				: this.#state === "category"
-					? this.#previewLines(this.#width, this.#height)
+					? this.#renderAnsiPreview(this.#width, this.#height)
 					: this.#renderAnsiEntry(this.#width, this.#height);
 		this.#body.setLines(lines);
 		this.#body.setHeight(this.#height);
@@ -592,8 +612,9 @@ export class ContextViewer implements Component {
 				: this.#state === "category" && !!this.#entries.selectedItem;
 		const confirm = canOpen ? editorKey("tui.select.confirm") : "";
 		const cancel = editorKey("tui.select.cancel");
+		const movement = this.#state === "overview" ? "select/scroll" : this.#state === "category" ? "select" : "scroll";
 		const hints = [
-			navigation && `${navigation} select/scroll`,
+			navigation && `${navigation} ${movement}`,
 			confirm && `${confirm} open`,
 			cancel && `${cancel} ${this.#state === "overview" ? "close" : "back"}`,
 		]
@@ -619,13 +640,10 @@ export class ContextViewer implements Component {
 			if (activation.kind !== "confirmed" || !activation.item.category) return;
 			this.#category = activation.item.category;
 			this.#entries.setItems(this.#category.entries, this.#category.entries[0]?.id);
-			this.#previewCache = undefined;
-			this.#previewScroll.scrollToTop();
+			this.#ansiPreviewCache = undefined;
+			this.#ansiPreviewScroll.scrollToTop();
 			if (this.#category.entries.length === 1) this.#openEntry(this.#category.entries[0]!, "overview");
-			else {
-				this.#state = "category";
-				if (this.#width > 0) this.#preparePreview(Math.max(1, this.#width - 2), this.#height);
-			}
+			else this.#state = "category";
 		} else if (this.#state === "category") {
 			const entry = this.#entries.selectedItem;
 			if (!entry) return;
@@ -663,16 +681,8 @@ export class ContextViewer implements Component {
 		} else if (this.#state === "overview") {
 			if (!this.#overview.move(delta)) this.#overviewScroll.scroll(delta);
 		} else {
-			// Use the ANSI preview range to scroll the selected entry's remaining content
-			// in the requested direction before changing selection in either renderer.
-			const range = this.#previewCache?.ranges[this.#entries.selectedIndex];
-			const visible = this.#previewScroll.getVisibleRange();
-			if (range && (delta > 0 ? range.end > visible.end : range.start < visible.start))
-				this.#previewScroll.scroll(delta);
-			else {
-				this.#entries.move(delta);
-				return;
-			}
+			this.#entries.move(delta);
+			return;
 		}
 		this.#nativeScroll = {
 			by: delta > 0 ? "line-down" : "line-up",
@@ -761,55 +771,57 @@ export class ContextViewer implements Component {
 			else for (const line of this.#summary()) children.push(text([span(line, "dim")], { wrap: "word" }));
 			children.push({ ...node("col", { grow: 1 }, body, "overview"), scroll: this.#nativeScroll });
 		} else if (this.#state === "category") {
-			this.#revealPreview(Math.max(1, this.#width - 2), this.#height);
-			const cache = this.#previewCache!;
-			const offset = this.#previewScroll.getScrollOffset();
+			const groups = new Set<string>();
 			const items = this.#entries.items.flatMap((entry, index) => {
-				const range = cache.ranges[index]!;
 				const selected = entry.id === this.#entries.selectedKey;
-				const lines: NativeNode[] = [];
-				for (let line = range.start; line < range.end; line++) {
-					const content =
-						selected && !range.complete && line === range.end - 1
-							? this.#truncationMarker(true)
-							: cache.lines[line]!;
-					lines.push({
-						...text(styledSpans(content || " "), { wrap: "word" }),
-						key: `line-${line}`,
-						// Share ANSI preview wrapping and offsets: reveal restores the viewport
-						// when returning from full content; scroll requests move mounted rows.
-						...(line === offset ? { reveal: "start" as const } : {}),
+				const group = entry.thinkingGroup;
+				const children: NativeNode[] = [];
+				if (group && !groups.has(group.id)) {
+					groups.add(group.id);
+					children.push({
+						...text(styledSpans(this.#groupHeaderLine(group)), { wrap: "word", lines: 1 }),
+						key: "group",
 					});
 				}
+				const header = this.#entryHeader(entry);
+				children.push({
+					...text(group ? [span("  "), ...header] : header, { wrap: "word", lines: 1 }),
+					key: "head",
+					...(selected ? { reveal: "nearest" as const } : {}),
+				});
+				const budget = this.#previewBudget(entry);
+				const content = this.#previewContent(entry, budget);
+				const spans: TspSpan[] = [];
+				if (content.metadata) spans.push(span(content.metadata + (content.body ? "\n" : ""), "dim"));
+				if (content.body) spans.push(span(content.body));
+				if (spans.length) children.push({ ...text(spans, { wrap: "word", lines: budget }), key: "preview" });
+				const hint = this.#previewHint(selected, !content.complete);
+				if (hint) children.push({ ...text(styledSpans(hint), { wrap: "word", lines: 1 }), key: "hint" });
 				return [
 					{
 						...node(
 							"col",
 							{
+								gap: "none",
 								mark: selected ? "pick" : undefined,
 								actions: { click: "select-entry", dblclick: "open-entry" },
 							},
-							lines,
+							children,
 							entry.id,
 						),
-						...(selected ? { reveal: { at: "start" as const, n: 0 } } : {}),
+						...(selected ? { reveal: { at: "nearest" as const, n: 0 } } : {}),
 					},
-					{
-						...text(" ", { wrap: "word" }),
-						key: `separator-${index}`,
-						...(range.end === offset ? { reveal: "start" as const } : {}),
-					},
+					{ ...text(" ", { wrap: "none" }), key: `separator-${index}` },
 				];
 			});
-			children.push({
-				...node(
+			children.push(
+				node(
 					"col",
 					{ grow: 1, gap: "none" },
 					items.length ? items : [text("No content in this category.", { wrap: "word" })],
 					"entries",
 				),
-				scroll: this.#nativeScroll,
-			});
+			);
 		} else {
 			const content = this.#entryBodyText();
 			const body = node(

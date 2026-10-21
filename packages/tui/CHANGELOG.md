@@ -10,6 +10,7 @@
 ### Changed
 
 - Improved native context viewer responsiveness when opening, resizing, and scrolling large outputs.
+- Context viewer navigation keys switch preview entries directly, with metadata and body sharing each entry's preview limit.
 
 ### Fixed
 

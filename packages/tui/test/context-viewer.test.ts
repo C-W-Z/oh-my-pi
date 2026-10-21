@@ -471,14 +471,6 @@ describe("ContextViewer preview and scrolling", () => {
 		h.viewer.describe(cx);
 		select(h.viewer, "tool-output");
 		const preview = h.render();
-		const category = h.viewer.describe(cx);
-		const entry = nodes(category).find(node => node.key === "result/0")!;
-		expect(entry.k).toBe("col");
-		expect(
-			nodes(entry)
-				.filter(node => node.k === "text")
-				.every(node => node.p?.wrap === "word"),
-		).toBe(true);
 		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
 		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
 		expect(h.render().join("\n")).toContain("short-multiline-tail");
@@ -493,74 +485,129 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(selected(h.viewer.describe(cx))).toBe("tool-output");
 	});
 
-	it("scrolls Native multiline metadata before changing selection and restores the category viewport after Back", () => {
+	it("changes Native preview selection directly after resize or mouse selection, without local scroll requests", () => {
 		const data = fixture(
 			{
 				id: "result/0",
 				label: "long output",
 				tokens: 1,
-				info: "output detail\n".repeat(60),
+				info: `${"output detail\n".repeat(60)}metadata-tail`,
 				text: "native-output-tail",
 			},
 			{ id: "result/1", label: "next output", tokens: 1, text: "next body" },
 		);
 		const h = harness(data);
 		h.resize(12);
-		const nativeCx = { ...cx, cols: 48 };
+		let nativeCx = { ...cx, cols: 48 };
 		const reconciler = new Reconciler("context-test");
 		const document = new TspDocument("context-test");
 		let frame = 0;
 		const reconcile = () => {
 			const ops = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, nativeCx);
 			expect(document.applyFrame({ sf: document.surface, s: ++frame, ops })).toEqual([]);
+			expect(ops.some(op => op[0] === "scroll")).toBe(false);
 			return ops;
 		};
 		reconcile();
 		select(h.viewer, "tool-output");
 		reconcile();
-		const preview = nodes(h.viewer.describe(nativeCx));
-		const body = preview.find(node => node.key === "entries")!;
-		expect(body.k).toBe("col");
-		expect(body.scroll).toBeDefined();
-		for (const [key, by] of [
-			["\x1b[B", "line-down"],
-			["\x1b[A", "line-up"],
+		for (const [key, id] of [
+			["\x1b[B", "result/1"],
+			["\x1b[A", "result/0"],
 		] as const) {
 			h.viewer.handleInput(key);
-			const ops = reconcile();
-			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual([by]);
-			expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
+			expect(reconcile().some(op => op[0] === "reveal" && op[2] === "nearest")).toBe(true);
+			expect(selected(h.viewer.describe(nativeCx))).toBe(id);
 		}
+		h.resize(8);
+		nativeCx = { ...nativeCx, cols: 24 };
+		reconcile();
 		h.viewer.handleInput("\x1b[B");
 		reconcile();
-		const before = h.render(48);
-		h.viewer.handleInput("\r");
+		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
+		h.viewer.handleInput("\x1b[B");
 		reconcile();
-		scrollToText(h.viewer, () => h.render(48), "native-output-tail");
-		reconcile();
-		expect(h.render(48).join("\n")).toContain("native-output-tail");
-		h.viewer.handleInput("\x1b");
-		const restored = reconcile();
-		expect(restored.some(op => op[0] === "reveal" && op[2] === "start")).toBe(true);
-		expect(h.render(48)).toEqual(before);
-		h.resize(18);
-		reconcile();
-		let changed = false;
-		for (let step = 0; step < 80; step++) {
-			h.viewer.handleInput("\x1b[B");
-			const ops = reconcile();
-			if (selected(h.viewer.describe(nativeCx)) === "result/1") {
-				expect(ops.some(op => op[0] === "scroll")).toBe(false);
-				expect(ops.some(op => op[0] === "reveal")).toBe(true);
-				changed = true;
-				break;
-			}
-			expect(ops.some(op => op[0] === "scroll" && op[2] === "line-down")).toBe(true);
-		}
-		expect(changed).toBe(true);
+		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
 		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "select-entry", mods: [] });
 		reconcile();
-		expect(selected(h.viewer.describe(nativeCx))).toBe("result/0");
+		h.viewer.handleInput("\x1b[B");
+		reconcile();
+		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
+		h.viewer.handleInput("\r");
+		reconcile();
+		expect(nativeText(h.viewer.describe(nativeCx))).toContain("next body");
+		h.viewer.handleInput("\x1b");
+		expect(reconcile().some(op => op[0] === "reveal" && op[2] === "nearest")).toBe(true);
+		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
+		h.viewer.handleInput("\x1b[A");
+		reconcile();
+		h.viewer.handleInput("\r");
+		reconcile();
+		const full = nativeText(h.viewer.describe(nativeCx));
+		expect(full).toContain("metadata-tail");
+		expect(full).toContain("native-output-tail");
+	});
+
+	it("bounds ANSI metadata and body together while preserving hidden content through Enter and Back", () => {
+		const h = harness(
+			fixture({
+				id: "result/0",
+				label: "metadata-heavy",
+				tokens: 1,
+				info: `${"output detail\n".repeat(60)}metadata-tail`,
+				text: "output-body-tail",
+			}),
+		);
+		h.resize(12);
+		h.render(48);
+		select(h.viewer, "tool-output");
+		const preview = h.render(48);
+		expect(preview.join("\n")).toContain("[metadata-heavy]");
+		expect(preview.join("\n")).toContain("output detail");
+		expect(preview.join("\n")).toContain("… more");
+		expect(preview.join("\n")).toContain("View Content");
+		expect(preview.join("\n")).not.toContain("metadata-tail");
+		expect(preview.join("\n")).not.toContain("output-body-tail");
+		h.viewer.handleInput("\x1b[B");
+		expect(h.render(48).find(line => line.includes("bash result"))).toContain("┃ ");
+		h.viewer.handleInput("\x1b[A");
+		expect(h.render(48)).toEqual(preview);
+		h.viewer.handleInput("\r");
+		scrollToText(h.viewer, () => h.render(48), "output-body-tail");
+		expect(h.render(48).join("\n")).toContain("metadata-tail");
+		expect(h.render(48).join("\n")).toContain("output-body-tail");
+		h.viewer.handleInput("\x1b");
+		expect(h.render(48)).toEqual(preview);
+	});
+
+	it("gives Native metadata and unwrapped wide text one shared viewport-dependent line clamp", () => {
+		const info = `metadata ${"長".repeat(20)}`;
+		const body = `body ${"中文字".repeat(30)}`;
+		const h = harness(
+			fixture({
+				id: "result/0",
+				label: "wide metadata",
+				tokens: 1,
+				info,
+				text: body,
+			}),
+		);
+		h.viewer.describe(cx);
+		select(h.viewer, "tool-output");
+		for (const [rows, cols] of [
+			[12, 48],
+			[8, 24],
+		] as const) {
+			h.resize(rows);
+			const root = h.viewer.describe({ ...cx, cols });
+			const block = nodes(root).find(node => node.k === "text" && textValue(node.p?.spans)?.startsWith(info));
+			if (block?.k !== "text") throw new Error("Native metadata and body must share a clamped text block");
+			expect(block?.p?.lines).toBeLessThanOrEqual(rows - 6);
+			const content = textValue(block?.p?.spans)!;
+			expect(content).toStartWith(`${info}\nbody `);
+			expect(content.split("\n")).toHaveLength(2);
+			expect(nativeText(root)).toContain("View Content");
+		}
 	});
 
 	it("emits a new Native scroll request for each repeated down input", () => {
@@ -615,33 +662,31 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(lines.every(line => visibleWidth(line) <= 48)).toBe(true);
 	});
 
-	it("keeps selected block gutters on visible body rows after the title scrolls away without marking separators", () => {
-		const data = fixture({
-			id: "result/0",
-			label: "first title",
-			info: "metadata",
-			tokens: 1,
-			text: "first body\n\n寬字 body\nlast body\nanother body\nmore body\nfinal body",
-		});
-		const h = harness(data);
-		h.resize(12);
+	it("moves the selected gutter with the entry without marking separators or the previous entry", () => {
+		const h = harness(
+			fixture({
+				id: "result/0",
+				label: "first title",
+				info: "metadata",
+				tokens: 1,
+				text: "first body\n\n寬字 body\nlast body",
+			}),
+		);
 		h.render(48);
 		select(h.viewer, "tool-output");
 		const before = h.render(48);
-		expect(before.find(line => line.includes("first title"))).toContain("┃ ");
-		let scrolled = before;
-		for (let index = 0; index < before.length && scrolled.some(line => line.includes("first title")); index++) {
-			h.viewer.handleInput("\x1b[B");
-			scrolled = h.render(48);
+		for (const value of ["first title", "metadata", "first body", "寬字 body", "last body"]) {
+			expect(before.find(line => line.includes(value))).toContain("┃ ");
 		}
-		expect(selected(h.viewer.describe({ ...cx, cols: 48 }))).toBe("result/0");
-		expect(scrolled.some(line => line.includes("first title"))).toBe(false);
-		expect(scrolled.filter(line => line.includes("body")).every(line => line.includes("┃ "))).toBe(true);
-		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/1", act: "select-entry", mods: [] });
+		const lastBody = before.findIndex(line => line.includes("last body"));
+		expect(before[lastBody + 1]).not.toContain("┃ ");
+		h.viewer.handleInput("\x1b[B");
 		const next = h.render(48);
 		expect(next.find(line => line.includes("bash result"))).toContain("┃ ");
 		expect(next.find(line => line.includes("short result"))).toContain("┃ ");
-		expect(next.filter(line => line.includes("┃")).length).toBe(3);
+		for (const value of ["first title", "metadata", "first body", "寬字 body", "last body"]) {
+			expect(next.find(line => line.includes(value))).not.toContain("┃ ");
+		}
 		expect(next.every(line => visibleWidth(line) <= 48)).toBe(true);
 	});
 });
