@@ -572,7 +572,6 @@ export class ContextViewer implements Component {
 			ranges.push({ start, end: lines.length, complete: content.complete });
 			lines.push("");
 		}
-		if (lines.length === 0) lines.push("No content in this category.");
 		this.#ansiPreviewCache = { category, width, height, lines, ranges };
 		this.#ansiPreviewScroll.setLines(lines);
 	}
@@ -898,12 +897,7 @@ export class ContextViewer implements Component {
 							[
 								// Native pick bars paint outside entry boxes, but must stay inside the viewport.
 								node("spacer", nativeSlotProps("w", { fixed: NATIVE_ENTRY_GUTTER_COLS }), undefined, "gutter"),
-								node(
-									"col",
-									{ grow: 1, min: { w: 0 }, gap: "none" },
-									items.length ? items : [text("No content in this category.", { wrap: "word" })],
-									NATIVE_ENTRY_KEYS.column,
-								),
+								node("col", { grow: 1, min: { w: 0 }, gap: "none" }, items, NATIVE_ENTRY_KEYS.column),
 							],
 							NATIVE_ENTRY_KEYS.row,
 						),
