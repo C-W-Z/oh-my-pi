@@ -89,6 +89,9 @@ interface EntryRange {
 }
 
 const NATIVE_ENTRY_GUTTER_COLS = 2;
+// Wrapper keys around native entry nodes; entry actions arrive at `<list>/<row>/<column>/<entry id>`.
+const NATIVE_ENTRY_KEYS = { list: "entries", row: "content", column: "list" } as const;
+const NATIVE_ENTRY_KEYPATH = `${NATIVE_ENTRY_KEYS.list}/${NATIVE_ENTRY_KEYS.row}/${NATIVE_ENTRY_KEYS.column}/`;
 
 function allocateTokens(weights: readonly number[], total: number): number[] | undefined {
 	const sum = weights.reduce((value, weight) => value + weight, 0);
@@ -870,13 +873,13 @@ export class ContextViewer implements Component {
 									"col",
 									{ grow: 1, min: { w: 0 }, gap: "none" },
 									items.length ? items : [text("No content in this category.", { wrap: "word" })],
-									"list",
+									NATIVE_ENTRY_KEYS.column,
 								),
 							],
-							"content",
+							NATIVE_ENTRY_KEYS.row,
 						),
 					],
-					"entries",
+					NATIVE_ENTRY_KEYS.list,
 				),
 			);
 		} else {
@@ -911,7 +914,8 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
-				const entry = this.#entries.items.find(entry => event.key === `entries/content/list/${entry.id}`);
+				const id = event.key.startsWith(NATIVE_ENTRY_KEYPATH) ? event.key.slice(NATIVE_ENTRY_KEYPATH.length) : "";
+				const entry = this.#entries.items.find(entry => entry.id === id);
 				if (!entry) return;
 				this.#entries.setSelectedKey(entry.id);
 				if (event.act === "open-entry") this.#activate();
