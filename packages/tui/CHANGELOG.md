@@ -7,19 +7,8 @@
 - `AutocompleteItem.descriptionMatch` marks a slash command matched only through its description; `Editor` Enter no longer applies such a row unless the user moved the selection onto it ([#16265](https://github.com/can1357/oh-my-pi/issues/16265))
 - Added an ANSI and native `/context` viewer with category navigation, content inspection, token-usage and compaction estimates, and keyboard/mouse controls that adapt across Tern and other terminals ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
 
-### Changed
-
-- Improved native context viewer responsiveness when opening, resizing, and scrolling large outputs.
-- Context viewer navigation keys switch preview entries directly, with metadata and body sharing each entry's preview limit.
-
 ### Fixed
 
-- Fixed native context previews adding an extra row on selection and showing inconsistent truncation hints.
-- Fixed native context viewer returning from full content without reliably revealing the selected entry.
-- Fixed native context entry previews and selection markers overflowing beneath the footer while preserving mouse-wheel scrolling.
-- Fixed context viewer timestamps retaining the previous clock format after switching between 12-hour and 24-hour time.
-- Fixed context viewer retaining full-content caches for previously viewed entries when browsing large outputs.
-- Fixed context viewer showing shared thinking counts as individual block usage and empty interrupted thinking as zero tokens.
 - Fixed the composer caret drifting one cell left per pasted image or video chip in terminals that draw the chip icon as a wide emoji (JetBrains terminal); the `unicode` preset now uses `📷`/`🎬` chip icons ([#16270](https://github.com/can1357/oh-my-pi/issues/16270))
 - Fixed Tern hiding user text sent with `/skill:<name>` inside a collapsed skill card; only the loaded skill prompt is hidden ([#16311](https://github.com/can1357/oh-my-pi/issues/16311))
 
