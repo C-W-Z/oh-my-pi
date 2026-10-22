@@ -85,9 +85,10 @@ Empty interrupted thinking without usage shows `N/A · Interrupted`, not a
 measured zero.
 
 Retained Anthropic web-search and tool-search calls and their results appear in
-Tool Calls and Tool Output as JSON blocks. Opaque provider data (thinking
-signatures and server-tool `signature`, `encrypted_content`, `encrypted_index`)
-shows only its size, such as `[signature · 1,024 chars]`; its tokens still count
+Tool Calls and Tool Output as JSON blocks. Opaque provider data shows only its
+size: thinking signatures and encrypted thinking appear in the entry metadata
+(`signature · 1,024 chars`), server-tool `signature`, `encrypted_content`, and
+`encrypted_index` inline as `[signature · 1,024 chars]`. Their tokens still count
 toward the estimates. Long content uses the normal preview limits and remains
 available in full-content view.
 

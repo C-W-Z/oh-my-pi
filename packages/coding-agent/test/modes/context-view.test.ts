@@ -286,10 +286,16 @@ describe("context snapshot assistant reasoning", () => {
 		const session = sessionWith({ prompt: [], messages: [message] });
 		const data = buildSessionContextView(session);
 		expect(category(data, "assistant-messages").entries.map(entry => entry.text)).toEqual(["visible answer"]);
-		expect(category(data, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
-			"readable thought\n[signature · 17 chars]",
-			"[Encoded thinking]\n[signature · 24 chars]",
-			"[Redacted thinking]",
+		const thinking = category(data, "assistant-thinking").entries;
+		expect(thinking.map(entry => entry.text)).toEqual([
+			"readable thought",
+			"[Encrypted thinking]",
+			"[Encrypted thinking]",
+		]);
+		expect(thinking.map(entry => entry.info)).toEqual([
+			"signature · 17 chars",
+			"signature · 24 chars",
+			"data · 18 chars",
 		]);
 		expect(category(data, "tool-calls").entries[0]?.text).toContain('"path": "notes.txt"');
 		expect(totalTokens(data)).toBe(session.agent.tokenizer.countMessages([message]));
@@ -495,7 +501,7 @@ describe("context snapshot message projection and snapshots", () => {
 		const before = structuredClone(assistant);
 		const initial = buildSessionContextView(session);
 		expect(category(initial, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
-			"complete reasoning\n[signature · 6 chars]",
+			"complete reasoning",
 			"unfinished reasoning",
 		]);
 		session.agent.appendMessage({
@@ -513,9 +519,7 @@ describe("context snapshot message projection and snapshots", () => {
 			content: [{ type: "thinking", thinking: "complete reasoning" }],
 		});
 		const updated = buildSessionContextView(session);
-		expect(category(updated, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
-			"complete reasoning\n[signature · 6 chars]",
-		]);
+		expect(category(updated, "assistant-thinking").entries.map(entry => entry.text)).toEqual(["complete reasoning"]);
 		expect(category(updated, "user-messages").entries).toEqual([
 			expect.objectContaining({
 				info: "custom · interrupted-thinking → developer",
@@ -526,7 +530,7 @@ describe("context snapshot message projection and snapshots", () => {
 		session.agent.state.messages.pop();
 		expect(buildSessionContextView(session)).toEqual(initial);
 		expect(category(initial, "assistant-thinking").entries.map(entry => entry.text)).toEqual([
-			"complete reasoning\n[signature · 6 chars]",
+			"complete reasoning",
 			"unfinished reasoning",
 		]);
 		expect(assistant).toEqual(before);

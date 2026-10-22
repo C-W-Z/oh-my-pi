@@ -28,9 +28,11 @@ const CATEGORIES: readonly [ContextCategoryId, string][] = [
 	["tool-output", "Tool Output"],
 ];
 
-/** One placeholder format for provider ciphertext: its size, never its bytes. */
-function opaquePlaceholder(name: string, value: string): string {
-	return `[${name} · ${value.length.toLocaleString("en-US")} chars]`;
+const ENCRYPTED_THINKING = "[Encrypted thinking]";
+
+/** Provider ciphertext is shown as its size, never its bytes. */
+function opaqueSize(name: string, value: string): string {
+	return `${name} · ${value.length.toLocaleString("en-US")} chars`;
 }
 
 /** Summarize media without retaining binary data, signatures, or message objects. */
@@ -42,14 +44,9 @@ function summarizeContentForView(content: unknown): string {
 			if (block === null || typeof block !== "object") return "[Unknown content]";
 			const item = block as Record<string, unknown>;
 			if (item.type === "text") return typeof item.text === "string" ? item.text : "";
-			if (item.type === "redactedThinking") return "[Redacted thinking]";
-			if (item.type === "thinking") {
-				const thinking = typeof item.thinking === "string" && item.thinking ? item.thinking : "[Encoded thinking]";
-				const signature = item.thinkingSignature;
-				return typeof signature === "string" && signature
-					? `${thinking}\n${opaquePlaceholder("signature", signature)}`
-					: thinking;
-			}
+			if (item.type === "redactedThinking") return ENCRYPTED_THINKING;
+			if (item.type === "thinking")
+				return typeof item.thinking === "string" && item.thinking ? item.thinking : ENCRYPTED_THINKING;
 			const facts = [String(item.type ?? "media")];
 			if (typeof item.mimeType === "string") facts.push(item.mimeType);
 			if (typeof item.width === "number" && typeof item.height === "number")
@@ -217,7 +214,7 @@ function appendServerToolEntry(
 				block,
 				(key, value) =>
 					typeof value === "string" && Object.hasOwn(OPAQUE_SERVER_TOOL_FIELDS, key)
-						? opaquePlaceholder(key, value)
+						? `[${opaqueSize(key, value)}]`
 						: value,
 				2,
 			) ?? "";
@@ -266,7 +263,7 @@ function appendAssistantMessageEntries(
 			id: `assistant-thinking/${entryIdPrefix}/payload`,
 			label: `Thinking 1/1 · message ${sourceIndex + 1}`,
 			info,
-			text: "[Encoded thinking]",
+			text: ENCRYPTED_THINKING,
 			timestamp: sourceMessage.timestamp,
 			tokens: reasoningReplayTokens,
 		});
@@ -300,6 +297,12 @@ function appendAssistantMessageEntries(
 		} else if (block.type === "fallback") {
 			text = `[provider fallback: ${block.from.model} to ${block.to.model}]`;
 		} else text = summarizeContentForView([block]);
+		const opaque =
+			block.type === "thinking" && block.thinkingSignature
+				? opaqueSize("signature", block.thinkingSignature)
+				: block.type === "redactedThinking"
+					? opaqueSize("data", block.data)
+					: undefined;
 		appendEntry(state, categoryId, {
 			id: `${categoryId}/${entryIdPrefix}/${blockIndex}`,
 			label:
@@ -308,7 +311,7 @@ function appendAssistantMessageEntries(
 					: categoryId === "assistant-thinking"
 						? `Thinking ${++thinkingIndex}/${thinkingBlockCount} · message ${sourceIndex + 1}`
 						: `${block.type} · message ${sourceIndex + 1}`,
-			info,
+			info: [info, opaque].filter(Boolean).join(" · ") || undefined,
 			text,
 			timestamp: sourceMessage.timestamp,
 			callId: block.type === "toolCall" ? block.id : undefined,
