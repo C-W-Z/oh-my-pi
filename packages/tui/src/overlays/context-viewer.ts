@@ -138,6 +138,15 @@ export class ContextViewer implements Component {
 	#ansiPreviewCache:
 		| { category: ContextViewCategory; width: number; height: number; lines: string[]; ranges: EntryRange[] }
 		| undefined;
+	// Like the ANSI cache, holds only the open category's previews, not every category.
+	#nativePreviewCache:
+		| {
+				category: ContextViewCategory;
+				width: number;
+				height: number;
+				previews: Map<ContextViewEntry, { spans: TspSpan[] | undefined; complete: boolean }>;
+		  }
+		| undefined;
 	#entryBodyCache: { entry: ContextViewEntry; text: string } | undefined;
 	#ansiEntryLayoutWidth: number | undefined;
 	#nativePreviewRevealAt: NativeRevealAt = "nearest";
@@ -241,6 +250,7 @@ export class ContextViewer implements Component {
 
 	invalidate(): void {
 		this.#ansiPreviewCache = undefined;
+		this.#nativePreviewCache = undefined;
 		this.#entryBodyCache = undefined;
 		this.#ansiEntryLayoutWidth = undefined;
 		this.#panel.invalidate();
@@ -249,6 +259,7 @@ export class ContextViewer implements Component {
 	dispose(): void {
 		this.#disposed = true;
 		this.#entryBodyCache = undefined;
+		this.#nativePreviewCache = undefined;
 		this.#ansiEntryLayoutWidth = undefined;
 		this.#overviewScroll.dispose();
 		this.#ansiPreviewScroll.dispose();
@@ -327,6 +338,26 @@ export class ContextViewer implements Component {
 			}
 		}
 		return { lines, complete };
+	}
+
+	#nativePreview(entry: ContextViewEntry): { spans: TspSpan[] | undefined; complete: boolean } {
+		const category = this.#category!;
+		let cache = this.#nativePreviewCache;
+		if (cache?.category !== category || cache.width !== this.#width || cache.height !== this.#height) {
+			cache = { category, width: this.#width, height: this.#height, previews: new Map() };
+			this.#nativePreviewCache = cache;
+		}
+		let preview = cache.previews.get(entry);
+		if (!preview) {
+			const indent = entry.thinkingGroup ? 2 : 0;
+			const width = Math.max(1, this.#width - 1 - NATIVE_ENTRY_GUTTER_COLS - indent);
+			const content = this.#entryPreview(entry, width, this.#previewBudget(entry));
+			// Tern owns final wrapping; only omitted source creates a more row.
+			const spans = content.lines.length ? styledSpans(content.lines.join("\n")) : undefined;
+			preview = { spans, complete: content.complete };
+			cache.previews.set(entry, preview);
+		}
+		return preview;
 	}
 
 	#entryLabel(entry: ContextViewEntry): string {
@@ -794,12 +825,8 @@ export class ContextViewer implements Component {
 					key: "head",
 					...(selected ? { reveal: this.#nativePreviewRevealAt } : {}),
 				});
-				const budget = this.#previewBudget(entry);
-				const width = Math.max(1, this.#width - 1 - NATIVE_ENTRY_GUTTER_COLS - (group ? 2 : 0));
-				const content = this.#entryPreview(entry, width, budget);
-				// Tern owns final wrapping; only omitted source creates a more row.
-				if (content.lines.length)
-					children.push({ ...text(styledSpans(content.lines.join("\n")), { wrap: "word" }), key: "preview" });
+				const content = this.#nativePreview(entry);
+				if (content.spans) children.push({ ...text(content.spans, { wrap: "word" }), key: "preview" });
 				if (!content.complete)
 					children.push({
 						...text(styledSpans(this.#previewHint(selected)), { wrap: "word", lines: 1 }),
