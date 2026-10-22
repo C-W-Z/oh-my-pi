@@ -646,7 +646,7 @@ describe("context snapshot message projection and snapshots", () => {
 });
 
 describe("context snapshot tool calls and output", () => {
-	it("groups retained server-tool calls and results while preserving every field for inspection", () => {
+	it("groups retained server-tool calls and results while replacing provider ciphertext with its size", () => {
 		const message = reply([
 			{
 				type: "anthropicServerTool",
@@ -708,8 +708,8 @@ describe("context snapshot tool calls and output", () => {
 				type: "web_search_result",
 				title: "Release notes",
 				url: "https://example.org/releases",
-				encrypted_content: "private-ciphertext",
-				signature: "private-signature",
+				encrypted_content: "[encrypted_content · 18 chars]",
+				signature: "[signature · 17 chars]",
 			},
 		]);
 		expect(category(data, "assistant-messages").entries).toEqual([]);

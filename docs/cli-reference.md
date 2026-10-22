@@ -85,9 +85,11 @@ Empty interrupted thinking without usage shows `N/A · Interrupted`, not a
 measured zero.
 
 Retained Anthropic web-search and tool-search calls and their results appear in
-Tool Calls and Tool Output as complete JSON blocks, including `signature` and
-`encrypted_content` when present. Long content uses the normal preview limits
-and remains available in full-content view.
+Tool Calls and Tool Output as JSON blocks. Opaque provider fields (`signature`,
+`encrypted_content`, `encrypted_index`) show only their size, as thinking
+signatures are never shown; their tokens still count toward the estimates. Long
+content uses the normal preview limits and remains available in full-content
+view.
 
 Use the configured `tui.select.up` / `tui.select.down` keys to select and scroll,
 `tui.select.confirm` to open an entry, and `tui.select.cancel` to go back or

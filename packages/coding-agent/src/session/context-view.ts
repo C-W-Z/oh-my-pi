@@ -176,6 +176,13 @@ function messageOriginInfo(
 	return `${sourceMessage.role}${customType}${roleConversion}`;
 }
 
+/** Provider-signed or encrypted server-tool fields, replayed verbatim but never readable. */
+const OPAQUE_SERVER_TOOL_FIELDS: Record<string, true> = {
+	signature: true,
+	encrypted_content: true,
+	encrypted_index: true,
+};
+
 function appendServerToolEntry(
 	state: ContextViewState,
 	block: AnthropicServerToolContent["block"],
@@ -194,7 +201,16 @@ function appendServerToolEntry(
 	const categoryId = isCall ? "tool-calls" : "tool-output";
 	let text: string;
 	try {
-		text = JSON.stringify(block, null, 2) ?? "";
+		// Ciphertext is unreadable; show its size while the entry estimate still counts it.
+		text =
+			JSON.stringify(
+				block,
+				(key, value) =>
+					typeof value === "string" && Object.hasOwn(OPAQUE_SERVER_TOOL_FIELDS, key)
+						? `[${key} · ${value.length.toLocaleString("en-US")} chars]`
+						: value,
+				2,
+			) ?? "";
 	} catch {
 		text = "[Content unavailable]";
 	}
