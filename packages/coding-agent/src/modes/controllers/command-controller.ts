@@ -52,6 +52,7 @@ import { ContextViewer } from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import type { OverlayHandle } from "@oh-my-pi/pi-tui";
 import { ReportPanel } from "@oh-my-pi/pi-tui/overlays/report-panel";
 import type { TspText } from "@oh-my-pi/pi-wire";
+import { computeSessionContextBreakdown } from "../../session/context-usage-runtime";
 import { buildSessionContextView } from "../../session/context-view";
 import { buildHotkeysMarkdown, HotkeysSheetComponent } from "@oh-my-pi/pi-tui/hotkeys-markdown";
 import { isNativeRendering } from "@oh-my-pi/pi-tui/native/state";
@@ -954,11 +955,18 @@ export class CommandController {
 	}
 
 	handleContextCommand(): void {
-		const data = buildSessionContextView(this.ctx.session);
-		if (!(data.window > 0) || !Number.isFinite(data.window)) {
+		const session = this.ctx.session;
+		if (!session.model) {
+			this.ctx.showWarning("Context usage is unavailable: no model is selected for this session.");
+			return;
+		}
+		// Validate capacity before tokenizing the whole history into a snapshot.
+		const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
+		if (!(breakdown.contextWindow > 0) || !Number.isFinite(breakdown.contextWindow)) {
 			this.ctx.showWarning("Context usage is unavailable: the model's context window is unknown or invalid.");
 			return;
 		}
+		const data = buildSessionContextView(session, breakdown);
 		this.#clearReport();
 		this.#closeReportSheet();
 		const viewer = new ContextViewer(data, {

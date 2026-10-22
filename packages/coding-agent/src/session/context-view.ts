@@ -10,7 +10,7 @@ import type {
 	ContextViewData,
 	ContextViewEntry,
 } from "@oh-my-pi/pi-tui/overlays/context-viewer";
-import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
+import { type ContextBreakdown, estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import { stringifyJson } from "@oh-my-pi/pi-utils";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
@@ -362,8 +362,10 @@ function finalizeToolOutputGroups(state: ContextViewState): void {
 }
 
 /** Sample once on open without session hooks, provider transforms, or file I/O. */
-export function buildSessionContextView(session: AgentSession): ContextViewData {
-	const breakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true });
+export function buildSessionContextView(
+	session: AgentSession,
+	breakdown: ContextBreakdown = computeSessionContextBreakdown(session, { snapcompactSavings: true }),
+): ContextViewData {
 	const categories: ContextViewCategory[] = CATEGORIES.map(([id, label]) => ({ id, label, tokens: 0, entries: [] }));
 	const state: ContextViewState = {
 		categoriesById: new Map(categories.map(category => [category.id, category])),
