@@ -163,8 +163,9 @@ function nativeText(root: NativeNode): string {
 }
 
 function selected(root: NativeNode): string | null | undefined {
-	const list = nodes(root).find(node => node.k === "list");
-	return list?.k === "list" ? list.p?.selected : nodes(root).find(node => node.p?.mark === "pick")?.key;
+	const all = nodes(root);
+	const list = all.find(node => node.k === "list" && node.p?.selected !== undefined);
+	return list?.k === "list" ? list.p?.selected : all.find(node => node.p?.mark === "pick")?.key;
 }
 
 function scrollToText(viewer: ContextViewer, render: () => readonly string[], value: string): void {
@@ -252,7 +253,7 @@ describe("ContextViewer keybindings", () => {
 		expect(h.closed()).toBe(0);
 		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
 		select(h.viewer, "tool-output");
-		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/content/list/result/0", act: "open-entry", mods: [] });
 		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
 		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
 		expect(selected(h.viewer.describe(cx))).toBe("result/0");
@@ -471,7 +472,7 @@ describe("ContextViewer preview and scrolling", () => {
 		h.viewer.describe(cx);
 		select(h.viewer, "tool-output");
 		const preview = h.render();
-		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+		h.viewer.handleNativeEvent({ type: "action", key: "entries/content/list/result/0", act: "open-entry", mods: [] });
 		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "entry-result/0")).toBe(true);
 		expect(h.render().join("\n")).toContain("short-multiline-tail");
 		h.viewer.handleNativeEvent({ type: "action", key: "back", act: "back", mods: [] });
@@ -528,7 +529,12 @@ describe("ContextViewer preview and scrolling", () => {
 		h.viewer.handleInput("\x1b[B");
 		reconcile();
 		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
-		h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "select-entry", mods: [] });
+		h.viewer.handleNativeEvent({
+			type: "action",
+			key: "entries/content/list/result/0",
+			act: "select-entry",
+			mods: [],
+		});
 		reconcile();
 		h.viewer.handleInput("\x1b[B");
 		reconcile();
@@ -538,7 +544,7 @@ describe("ContextViewer preview and scrolling", () => {
 		expect(nativeText(h.viewer.describe(nativeCx))).toContain("next body");
 		h.viewer.handleInput("\x1b");
 		expect(reconcile().filter(op => op[0] === "reveal")).toEqual([
-			["reveal", expect.stringMatching(/entries\/result%2F1\/head$/), "start"],
+			["reveal", expect.stringMatching(/entries\/content\/list\/result%2F1\/head$/), "start"],
 		]);
 		expect(selected(h.viewer.describe(nativeCx))).toBe("result/1");
 		h.viewer.handleInput("\x1b[A");
@@ -993,7 +999,7 @@ describe("ContextViewer entry content", () => {
 			expect(preview).not.toContain("unavailable");
 		}
 		for (const id of ["first", "second"]) {
-			h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+			h.viewer.handleNativeEvent({ type: "action", key: `entries/content/list/${id}`, act: "open-entry", mods: [] });
 			for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
 				expect(detail).toContain(`[${id} block] —`);
 				expect(detail).toContain(`${group.label} · 1,250 tokens`);
@@ -1037,7 +1043,7 @@ describe("ContextViewer entry content", () => {
 			expect(preview).not.toContain("0 tokens");
 		}
 		for (const id of ["interrupted-single", "second"]) {
-			h.viewer.handleNativeEvent({ type: "action", key: `entries/${id}`, act: "open-entry", mods: [] });
+			h.viewer.handleNativeEvent({ type: "action", key: `entries/content/list/${id}`, act: "open-entry", mods: [] });
 			for (const detail of [h.render(160).join("\n"), nativeText(h.viewer.describe({ ...cx, cols: 160 }))]) {
 				expect(detail).toContain("N/A · Interrupted");
 				expect(detail).not.toContain("0 tokens");
@@ -1118,7 +1124,12 @@ describe("ContextViewer entry content", () => {
 		select(h.viewer, "tool-output");
 		for (const page of ["preview", "full"]) {
 			if (page === "full")
-				h.viewer.handleNativeEvent({ type: "action", key: "entries/result/0", act: "open-entry", mods: [] });
+				h.viewer.handleNativeEvent({
+					type: "action",
+					key: "entries/content/list/result/0",
+					act: "open-entry",
+					mods: [],
+				});
 			for (const hour12 of [true, false, true]) {
 				const expected = new Date(0).toLocaleString([], {
 					year: "numeric",

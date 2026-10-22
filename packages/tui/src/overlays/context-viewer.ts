@@ -8,6 +8,7 @@ import {
 } from "../chrome/context-presentation";
 import { editorKey } from "../chrome/keybinding-hints";
 import { OverlayPanel, PanelDivider, PanelRows } from "../chrome/overlay-box";
+import { nativeSlotProps } from "../components/layout/geometry";
 import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
 import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
@@ -86,6 +87,8 @@ interface EntryRange {
 	end: number;
 	complete: boolean;
 }
+
+const NATIVE_ENTRY_GUTTER_COLS = 2;
 
 function allocateTokens(weights: readonly number[], total: number): number[] | undefined {
 	const sum = weights.reduce((value, weight) => value + weight, 0);
@@ -792,7 +795,7 @@ export class ContextViewer implements Component {
 					...(selected ? { reveal: this.#nativePreviewRevealAt } : {}),
 				});
 				const budget = this.#previewBudget(entry);
-				const width = Math.max(1, this.#width - 1 - (group ? 2 : 0));
+				const width = Math.max(1, this.#width - 1 - NATIVE_ENTRY_GUTTER_COLS - (group ? 2 : 0));
 				const content = this.#entryPreview(entry, width, budget);
 				// Tern owns final wrapping; only omitted source creates a more row.
 				if (content.lines.length)
@@ -819,11 +822,33 @@ export class ContextViewer implements Component {
 					{ ...text(" ", { wrap: "none" }), key: `separator-${index}` },
 				];
 			});
+			// list.max owns a wheel scroller; common max.h would only clip.
 			children.push(
 				node(
-					"col",
-					{ grow: 1, gap: "none" },
-					items.length ? items : [text("No content in this category.", { wrap: "word" })],
+					"list",
+					{
+						grow: 1,
+						min: { h: 0 },
+						max: { lines: Math.max(1, this.#height) },
+						hidden: this.#height === 0 ? true : undefined,
+					},
+					[
+						node(
+							"row",
+							{ gap: "none", align: "start" },
+							[
+								// Native pick bars paint outside entry boxes, but must stay inside the viewport.
+								node("spacer", nativeSlotProps("w", { fixed: NATIVE_ENTRY_GUTTER_COLS }), undefined, "gutter"),
+								node(
+									"col",
+									{ grow: 1, min: { w: 0 }, gap: "none" },
+									items.length ? items : [text("No content in this category.", { wrap: "word" })],
+									"list",
+								),
+							],
+							"content",
+						),
+					],
 					"entries",
 				),
 			);
@@ -847,7 +872,10 @@ export class ContextViewer implements Component {
 				actionButton("Close", "close"),
 			]),
 		);
-		return col(children, { role: "omp.context" });
+		return col(children, {
+			role: "omp.context",
+			...(this.#state === "category" ? { grow: 1, min: { h: 0 } } : {}),
+		});
 	}
 
 	handleNativeEvent(event: NativeUiEvent): void {
@@ -856,7 +884,7 @@ export class ContextViewer implements Component {
 			if (event.act === "close") this.#close();
 			else if (event.act === "back") this.#back();
 			else if (this.#state === "category" && (event.act === "select-entry" || event.act === "open-entry")) {
-				const entry = this.#entries.items.find(entry => event.key === `entries/${entry.id}`);
+				const entry = this.#entries.items.find(entry => event.key === `entries/content/list/${entry.id}`);
 				if (!entry) return;
 				this.#entries.setSelectedKey(entry.id);
 				if (event.act === "open-entry") this.#activate();
