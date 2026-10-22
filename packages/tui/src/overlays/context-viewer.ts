@@ -11,7 +11,13 @@ import { OverlayPanel, PanelDivider, PanelRows } from "../chrome/overlay-box";
 import { nativeSlotProps } from "../components/layout/geometry";
 import { MenuSelection } from "../components/menu-selection";
 import { ScrollView } from "../components/scroll-view";
-import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
+import {
+	matchesSelectCancel,
+	matchesSelectDown,
+	matchesSelectPageDown,
+	matchesSelectPageUp,
+	matchesSelectUp,
+} from "../keybinding-matchers";
 import { getKeybindings } from "../keybindings";
 import { col, item, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeNode, NativeRevealAt, NativeScroll, NativeUiEvent } from "../native/node";
@@ -213,7 +219,8 @@ export class ContextViewer implements Component {
 				id: category.id,
 				label: overviewLabel(category),
 				tokens: this.#allocated.get(category),
-				category: category.id === "skills" ? undefined : category,
+				// Skills is an estimate without entries; empty categories have nothing to open.
+				category: category.id === "skills" || category.entries.length === 0 ? undefined : category,
 			});
 			for (const child of category.children ?? [])
 				rows.push({
@@ -650,8 +657,13 @@ export class ContextViewer implements Component {
 		const confirm = canOpen ? editorKey("tui.select.confirm") : "";
 		const cancel = editorKey("tui.select.cancel");
 		const movement = this.#state === "overview" ? "select/scroll" : this.#state === "category" ? "select" : "scroll";
+		const paging =
+			this.#state === "entry"
+				? [editorKey("tui.select.pageUp"), editorKey("tui.select.pageDown")].filter(Boolean).join("/")
+				: "";
 		const hints = [
 			navigation && `${navigation} ${movement}`,
+			paging && `${paging} page`,
 			confirm && `${confirm} open`,
 			cancel && `${cancel} ${this.#state === "overview" ? "close" : "back"}`,
 		]
@@ -729,12 +741,27 @@ export class ContextViewer implements Component {
 		};
 	}
 
+	/** Page the full-content view; lists keep single-step selection. */
+	#page(direction: -1 | 1): void {
+		if (this.#state !== "entry") return;
+		if (this.#lastRenderMode === "ansi") {
+			if (this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
+			// Keep one line of overlap so the reading position stays visible.
+			this.#ansiEntryScroll.scroll(direction * Math.max(1, this.#height - 1));
+		}
+		this.#nativeScroll = {
+			by: direction > 0 ? "page-down" : "page-up",
+			n: this.#nativeScroll.n + 1,
+		};
+	}
+
 	/** Capture only handled navigation keys; the focus path consumes other modal input. */
 	capturesInput(data: string): boolean {
 		return (
 			matchesSelectCancel(data) ||
 			matchesSelectUp(data) ||
 			matchesSelectDown(data) ||
+			(this.#state === "entry" && (matchesSelectPageUp(data) || matchesSelectPageDown(data))) ||
 			getKeybindings().matches(data, "tui.select.confirm")
 		);
 	}
@@ -745,6 +772,8 @@ export class ContextViewer implements Component {
 		else if (getKeybindings().matches(data, "tui.select.confirm")) this.#activate();
 		else if (matchesSelectUp(data)) this.#navigate(-1);
 		else if (matchesSelectDown(data)) this.#navigate(1);
+		else if (matchesSelectPageUp(data)) this.#page(-1);
+		else if (matchesSelectPageDown(data)) this.#page(1);
 		this.#requestRender();
 	}
 	describe(cx: DescribeContext): NativeNode {

@@ -91,8 +91,10 @@ and remains available in full-content view.
 
 Use the configured `tui.select.up` / `tui.select.down` keys to select and scroll,
 `tui.select.confirm` to open an entry, and `tui.select.cancel` to go back or
-close. They default to Up/Down, Enter, and Esc; configure other keys in
-`keybindings.yml`. In native previews, click to select and double-click to open.
+close. In full-content view, `tui.select.pageUp` / `tui.select.pageDown` scroll
+by a page. They default to Up/Down, Enter, Esc, and PageUp/PageDown; configure
+other keys in `keybindings.yml`. In native previews, click to select and
+double-click to open. Categories without entries cannot be opened.
 Closing full-content view restores the previous selection and scroll position.
 Truncated previews show `… more`; confirm to inspect the full entry.
 

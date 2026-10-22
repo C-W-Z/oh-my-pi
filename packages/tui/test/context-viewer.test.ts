@@ -201,8 +201,9 @@ describe("ContextViewer keybindings", () => {
 				select(h.viewer, "built-in-tools", false);
 				expect(h.viewer.capturesInput(key)).toBe(key === up || key === down);
 				h.viewer.handleInput(key);
+				// Down skips the empty Custom Tools row, which has nothing to open.
 				expect(selected(h.viewer.describe(cx))).toBe(
-					key === up ? "system-prompt" : key === down ? "custom-tools" : "built-in-tools",
+					key === up ? "system-prompt" : key === down ? "user-messages" : "built-in-tools",
 				);
 			}
 		});
@@ -306,14 +307,12 @@ describe("ContextViewer navigation", () => {
 		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "overview")).toBe(true);
 	});
 
-	it("opens an empty category and returns to its overview selection", () => {
+	it("keeps an empty category closed and unselectable in both renderers", () => {
 		const h = harness();
 		select(h.viewer, "custom-tools");
-		expect(nativeText(h.viewer.describe(cx))).toContain("No content in this category.");
-		expect(h.render()[0]).toContain("Custom Tools");
-		h.viewer.handleInput("\x1b");
-		expect(selected(h.viewer.describe(cx))).toBe("custom-tools");
+		expect(selected(h.viewer.describe(cx))).toBe("system-prompt");
 		expect(nodes(h.viewer.describe(cx)).some(node => node.key === "overview")).toBe(true);
+		expect(h.render()[0]).not.toContain("Custom Tools");
 	});
 
 	it("skips capacity rows at the navigation boundary before and after resizing", () => {
@@ -367,12 +366,6 @@ describe("ContextViewer navigation", () => {
 		select(h.viewer, read.key!);
 		root = checkCategory(read);
 		expect(nodes(root).some(node => node.key === "entry-result/0")).toBe(true);
-		back();
-		expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
-
-		const empty = data.categories.find(category => category.id === "custom-tools")!;
-		select(h.viewer, empty.id);
-		checkCategory(empty);
 		back();
 		expect(textValue(h.viewer.nativeOverlay.head)).toBe(overviewHead);
 	});
@@ -675,6 +668,33 @@ describe("ContextViewer preview and scrolling", () => {
 			const ops = reconciler.reconcile({ main: [h.viewer], dock: [], layer: [] }, cx);
 			expect(ops.filter(op => op[0] === "scroll").map(op => op[2])).toEqual(["line-down"]);
 		}
+	});
+
+	it("pages the full-content view in both renderers and keeps list selection single-step", () => {
+		const h = harness();
+		const pageDown = "\x1b[6~";
+		const pageUp = "\x1b[5~";
+		select(h.viewer, "tool-output");
+		expect(h.viewer.capturesInput(pageDown)).toBe(false);
+		h.viewer.handleInput(pageDown);
+		expect(selected(h.viewer.describe(cx))).toBe("result/0");
+		h.render();
+		h.viewer.handleInput("\r");
+		expect(h.viewer.capturesInput(pageDown)).toBe(true);
+		const top = h.render().join("\n");
+		expect(top).toContain("line 1 ");
+		h.viewer.handleInput(pageDown);
+		const paged = h.render().join("\n");
+		expect(paged).not.toContain("line 1 ");
+		expect(paged).toMatch(/line [1-9]\d /);
+		h.viewer.handleInput(pageUp);
+		expect(h.render().join("\n")).toEqual(top);
+		// Native owns its scroll position; the viewer only emits page requests.
+		h.viewer.describe(cx);
+		h.viewer.handleInput(pageDown);
+		expect(nodes(h.viewer.describe(cx)).find(node => node.key === "entry-result/0")?.scroll).toMatchObject({
+			by: "page-down",
+		});
 	});
 
 	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
