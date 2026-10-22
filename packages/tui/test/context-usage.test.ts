@@ -165,7 +165,7 @@ describe("renderContextUsage snapcompact section", () => {
 		expect(output).toContain("System prompt (all): saves ~3.2K (9.8K text → 2 frames ≈ 6.6K)");
 		expect(output).toContain("Tool results: none imaged (3 in history)");
 		// 27929 logical − 3168 saved ≈ 25K on the wire.
-		expect(output).toContain("Estimated after Snapcompact: ~25K tokens");
+		expect(output).toContain("Next request: ~25K tokens on the wire");
 	});
 
 	it("reports text-only models as inactive", () => {

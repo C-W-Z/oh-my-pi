@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
-import { isPerCallContextMessage, markPerCallContextMessage } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import {
 	buildReplanTitleContext,
 	type CustomMessage,
@@ -337,16 +336,6 @@ describe("convertMessagesForContextView", () => {
 		expect(converted[1].message).toMatchObject({ role: "toolResult", toolName: "recall" });
 		expect(assistant.content[0]).toMatchObject({ name: "xd://recall" });
 		expect(messages[1]).toMatchObject({ toolName: "xd://recall" });
-	});
-
-	it("does not copy per-call provenance onto fresh custom conversions", () => {
-		const source = customMessage("extension-note", "agent");
-		markPerCallContextMessage(source);
-		const viewed = convertMessagesForContextView([source])[0].message;
-		expect(isPerCallContextMessage(source)).toBe(true);
-		expect(isPerCallContextMessage(viewed)).toBe(false);
-		expect(isPerCallContextMessage(convertToLlm([source])[0])).toBe(true);
-		expect(isPerCallContextMessage(viewed)).toBe(false);
 	});
 });
 

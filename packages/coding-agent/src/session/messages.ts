@@ -712,6 +712,7 @@ function wrapSteeringUserMessage(message: SteeringUserMessage): UserMessage {
 					attribution: "user",
 					timestamp: message.timestamp,
 				};
+	copyPerCallContextMessage(userMessage, message);
 	if (typeof message.content === "string") {
 		if (message.content.length === 0) return message.role === "user" ? message : userMessage;
 		return { ...userMessage, content: renderSteeringEnvelope(message.content) };
@@ -743,7 +744,6 @@ export function wrapSteeringForModel(messages: AgentMessage[]): AgentMessage[] {
 		let wrappedMessage = steeringWrapperCache.get(message);
 		if (wrappedMessage === undefined) {
 			wrappedMessage = wrapSteeringUserMessage(message);
-			copyPerCallContextMessage(wrappedMessage, message);
 			steeringWrapperCache.set(message, wrappedMessage);
 		}
 		if (wrappedMessage === message) continue;
@@ -1196,9 +1196,9 @@ export interface ContextViewMessage {
 }
 
 /**
- * Convert history for inspection without reading or populating production caches
- * or copying per-call provenance onto converted messages. Steering messages show
- * the envelope `wrapSteeringForModel` sends; other `convertToLlm` callers keep raw text.
+ * Convert history for inspection without reading or populating production caches.
+ * Steering messages show the envelope `wrapSteeringForModel` sends; other
+ * `convertToLlm` callers keep raw text.
  */
 export function convertMessagesForContextView(messages: AgentMessage[]): ContextViewMessage[] {
 	const result: ContextViewMessage[] = [];
