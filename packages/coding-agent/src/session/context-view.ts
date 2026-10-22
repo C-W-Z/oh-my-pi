@@ -269,6 +269,8 @@ function appendAssistantMessageEntries(
 			} catch {
 				text = "[Arguments unavailable]";
 			}
+		} else if (block.type === "fallback") {
+			text = `[provider fallback: ${block.from.model} to ${block.to.model}]`;
 		} else text = summarizeContentForView([block]);
 		appendEntry(state, categoryId, {
 			id: `${categoryId}/${entryIdPrefix}/${blockIndex}`,
