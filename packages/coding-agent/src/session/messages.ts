@@ -1172,7 +1172,7 @@ function convertOne(m: AgentMessage, interruptedNext: boolean): Message[] {
 			// Core roles share one transformer with agent-core —
 			// duplicating them here is how snapcompact frames once
 			// silently fell off the provider request.
-			const converted = convertMessageToLlm(isSteeringUserMessage(m) ? wrapSteeringUserMessage(m) : m);
+			const converted = convertMessageToLlm(m);
 			return converted ? [converted] : [];
 		}
 		case "toolResult": {
@@ -1197,14 +1197,16 @@ export interface ContextViewMessage {
 
 /**
  * Convert history for inspection without reading or populating production caches
- * or copying per-call provenance onto converted messages.
+ * or copying per-call provenance onto converted messages. Steering messages show
+ * the envelope `wrapSteeringForModel` sends; other `convertToLlm` callers keep raw text.
  */
 export function convertMessagesForContextView(messages: AgentMessage[]): ContextViewMessage[] {
 	const result: ContextViewMessage[] = [];
 	for (let sourceIndex = 0; sourceIndex < messages.length; sourceIndex++) {
 		const source = messages[sourceIndex];
 		const interruptedNext = source.role === "assistant" && followedByInterruptedThinking(messages, sourceIndex);
-		for (const message of convertOne(source, interruptedNext)) {
+		const input = isSteeringUserMessage(source) ? wrapSteeringUserMessage(source) : source;
+		for (const message of convertOne(input, interruptedNext)) {
 			result.push({ message, sourceIndex, convertedIndex: result.length });
 		}
 	}

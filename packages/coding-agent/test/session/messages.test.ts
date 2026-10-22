@@ -189,7 +189,8 @@ describe("convertMessagesForContextView", () => {
 		if (typeof content !== "string") throw new Error("Expected string steering content");
 		expect(content).toContain("Use the revised plan");
 		expect(content.match(/<system-notice>/g)).toHaveLength(1);
-		expect(convertToLlm(messages)).toEqual(production);
+		// Callers that skip `wrapSteeringForModel` (compaction serialization, side requests) keep the raw text.
+		expect(convertToLlm(messages)[0].content).toBe("Use the revised plan");
 		expect(convertToLlm(wrapSteeringForModel(wrapped))).toEqual(production);
 		expect(convertMessagesForContextView(wrapped).map(entry => entry.message)).toEqual(production);
 		expect(source).toEqual({
