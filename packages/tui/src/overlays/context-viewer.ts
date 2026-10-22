@@ -318,7 +318,7 @@ export class ContextViewer implements Component {
 		this.#resetEntryLayout();
 		this.#ansiEntryScroll.scrollToTop();
 		this.#state = "entry";
-		if (this.#lastRenderMode === "ansi" && this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
+		if (this.#lastRenderMode === "ansi" && this.#width > 0) this.#ensureAnsiEntryLayout();
 	}
 
 	#back(): void {
@@ -335,7 +335,7 @@ export class ContextViewer implements Component {
 	#navigate(delta: -1 | 1): void {
 		if (this.#state === "entry") {
 			if (this.#lastRenderMode === "ansi") {
-				if (this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
+				if (this.#width > 0) this.#ensureAnsiEntryLayout();
 				this.#ansiEntryScroll.scroll(delta);
 			}
 		} else if (this.#state === "overview") {
@@ -354,7 +354,7 @@ export class ContextViewer implements Component {
 	#page(direction: -1 | 1): void {
 		if (this.#state !== "entry") return;
 		if (this.#lastRenderMode === "ansi") {
-			if (this.#width > 0) this.#ensureAnsiEntryLayout(this.#width, this.#height);
+			if (this.#width > 0) this.#ensureAnsiEntryLayout();
 			// Keep one line of overlap so the reading position stays visible.
 			this.#ansiEntryScroll.scroll(direction * Math.max(1, this.#height - 1));
 		}
@@ -423,10 +423,10 @@ export class ContextViewer implements Component {
 		this.#header.setLines(summary.map(line => truncateToWidth(theme.fg("dim", line), this.#width)));
 		this.#body.setLines(
 			this.#state === "overview"
-				? this.#renderOverview(this.#width, this.#height)
+				? this.#renderOverview()
 				: this.#state === "category"
-					? this.#renderCategory(this.#width, this.#height)
-					: this.#renderEntry(this.#width, this.#height),
+					? this.#renderCategory()
+					: this.#renderEntry(),
 		);
 		this.#body.setHeight(this.#height);
 		this.#footer.setLines([truncateToWidth(theme.fg("dim", this.#footerHints()), this.#width)]);
@@ -461,7 +461,9 @@ export class ContextViewer implements Component {
 	}
 
 	/** Map on the left when it fits; scrollable legend and Snapcompact diagnostics on the right. */
-	#renderOverview(width: number, height: number): string[] {
+	#renderOverview(): string[] {
+		const width = this.#width;
+		const height = this.#height;
 		const usage = this.#scaledUsage;
 		const map = usage ? mapGeometry(width, height) : undefined;
 		const listWidth = map ? width - map.width - MAP_LEGEND_GAP : width;
@@ -495,9 +497,15 @@ export class ContextViewer implements Component {
 	}
 
 	/** Entry previews with the selected one marked by a gutter bar. */
-	#renderCategory(width: number, height: number): string[] {
-		const contentWidth = Math.max(1, width - 2);
-		const range = this.#revealAnsiPreview(contentWidth, height);
+	#renderCategory(): string[] {
+		const contentWidth = Math.max(1, this.#width - 2);
+		this.#prepareAnsiPreview(contentWidth, this.#height);
+		const range = this.#ansiPreviewCache!.ranges[this.#entries.selectedIndex];
+		if (range)
+			this.#ansiPreviewScroll.revealRange(
+				{ id: this.#entries.selectedKey!, start: range.start, end: range.end, margin: 0, oversized: "start" },
+				contentWidth,
+			);
 		const offset = this.#ansiPreviewScroll.getScrollOffset();
 		return this.#ansiPreviewScroll.render(contentWidth).map((line, index) => {
 			const selected = range && offset + index >= range.start && offset + index < range.end;
@@ -505,17 +513,6 @@ export class ContextViewer implements Component {
 				line = truncateToWidth(previewHint(true), contentWidth - 1);
 			return `${selected ? theme.fg("accent", "┃ ") : "  "}${line}`;
 		});
-	}
-
-	#revealAnsiPreview(width: number, height: number): EntryRange | undefined {
-		this.#prepareAnsiPreview(width, height);
-		const range = this.#ansiPreviewCache!.ranges[this.#entries.selectedIndex];
-		if (range)
-			this.#ansiPreviewScroll.revealRange(
-				{ id: this.#entries.selectedKey!, start: range.start, end: range.end, margin: 0, oversized: "start" },
-				width,
-			);
-		return range;
 	}
 
 	#prepareAnsiPreview(width: number, height: number): void {
@@ -546,14 +543,15 @@ export class ContextViewer implements Component {
 		this.#ansiPreviewScroll.setLines(lines);
 	}
 
-	#renderEntry(width: number, height: number): string[] {
-		this.#ensureAnsiEntryLayout(width, height);
-		return [...this.#ansiEntryScroll.render(width)];
+	#renderEntry(): string[] {
+		this.#ensureAnsiEntryLayout();
+		return [...this.#ansiEntryScroll.render(this.#width)];
 	}
 
-	#ensureAnsiEntryLayout(width: number, height: number): void {
+	#ensureAnsiEntryLayout(): void {
+		const width = this.#width;
 		const content = this.#entryBodyText();
-		this.#ansiEntryScroll.setHeight(height);
+		this.#ansiEntryScroll.setHeight(this.#height);
 		if (this.#ansiEntryLayoutWidth !== width) {
 			const entry = this.#entry!;
 			const contentWidth = Math.max(1, width - 1);
