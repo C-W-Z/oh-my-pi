@@ -35,7 +35,7 @@ function opaqueSize(name: string, value: string): string {
 	return `${name} · ${value.length.toLocaleString("en-US")} chars`;
 }
 
-/** Summarize media without retaining binary data, signatures, or message objects. */
+/** Summarize message content without retaining binary data or message objects. */
 function summarizeContentForView(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -44,9 +44,6 @@ function summarizeContentForView(content: unknown): string {
 			if (block === null || typeof block !== "object") return "[Unknown content]";
 			const item = block as Record<string, unknown>;
 			if (item.type === "text") return typeof item.text === "string" ? item.text : "";
-			if (item.type === "redactedThinking") return ENCRYPTED_THINKING;
-			if (item.type === "thinking")
-				return typeof item.thinking === "string" && item.thinking ? item.thinking : ENCRYPTED_THINKING;
 			const facts = [String(item.type ?? "media")];
 			if (typeof item.mimeType === "string") facts.push(item.mimeType);
 			if (typeof item.width === "number" && typeof item.height === "number")
@@ -288,6 +285,7 @@ function appendAssistantMessageEntries(
 					? "assistant-thinking"
 					: "assistant-messages";
 		let text: string;
+		let opaque: string | undefined;
 		if (block.type === "toolCall") {
 			try {
 				text = stringifyJson(block.arguments, 2) ?? "null";
@@ -296,13 +294,13 @@ function appendAssistantMessageEntries(
 			}
 		} else if (block.type === "fallback") {
 			text = `[provider fallback: ${block.from.model} to ${block.to.model}]`;
+		} else if (block.type === "thinking") {
+			text = block.thinking || ENCRYPTED_THINKING;
+			if (block.thinkingSignature) opaque = opaqueSize("signature", block.thinkingSignature);
+		} else if (block.type === "redactedThinking") {
+			text = ENCRYPTED_THINKING;
+			opaque = opaqueSize("data", block.data);
 		} else text = summarizeContentForView([block]);
-		const opaque =
-			block.type === "thinking" && block.thinkingSignature
-				? opaqueSize("signature", block.thinkingSignature)
-				: block.type === "redactedThinking"
-					? opaqueSize("data", block.data)
-					: undefined;
 		appendEntry(state, categoryId, {
 			id: `${categoryId}/${entryIdPrefix}/${blockIndex}`,
 			label:
