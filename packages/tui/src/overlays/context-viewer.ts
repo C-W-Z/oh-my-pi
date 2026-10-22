@@ -258,11 +258,16 @@ export class ContextViewer implements Component {
 
 	get nativeOverlay(): NonNullable<Component["nativeOverlay"]> {
 		const category = this.#state === "overview" ? undefined : this.#category;
-		if (!this.#nativeOverlay || this.#nativeOverlay.category !== category) {
+		const role = this.#state === "category" ? "omp.overlay.contextPreview" : "omp.overlay.report";
+		if (
+			!this.#nativeOverlay ||
+			this.#nativeOverlay.category !== category ||
+			this.#nativeOverlay.props.role !== role
+		) {
 			this.#nativeOverlay = {
 				category,
 				props: {
-					role: "omp.overlay.report",
+					role,
 					size: "lg",
 					anchor: "center",
 					head: category

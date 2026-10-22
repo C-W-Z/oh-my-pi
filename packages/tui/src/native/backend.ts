@@ -56,6 +56,7 @@ import { encodeTspJson, encodeTspMessage, type TspHello, TspReader, splitTspMess
 import type { DescribeContext, NativeChild, NativeNode, NativeSurface, NativeUiEvent } from "./node";
 import { nativeComponentId, Reconciler } from "./reconcile";
 import { setNativeRendering } from "./state";
+import nativeStyles from "./styles.css" with { type: "text" };
 
 /** A visible TUI overlay, bottom to top. */
 export interface NativeOverlay {
@@ -400,6 +401,11 @@ export class NativeBackend {
 		this.#write("t", { sf: surface.id, ...palette });
 	}
 
+	/** Install builtin styles only after the terminal advertises stylesheet support. */
+	#sendStyles(surface: Surface): void {
+		if (this.#cx.feature("styles")) this.#write("s", { sf: surface.id, name: "omp", css: nativeStyles });
+	}
+
 	/** Resend the palette to every open surface when the theme changed since it was sent. */
 	#refreshPalette(): void {
 		const key = this.#paletteKey;
@@ -460,6 +466,7 @@ export class NativeBackend {
 		surface.dirty = false;
 		this.#write("o", { id: surface.id, mode: "inline", title: "omp", role: SESSION_ROLE, adopt: true });
 		this.#sendPalette(surface);
+		this.#sendStyles(surface);
 		// After the `o`, as in `start()`.
 		setNativeRendering(true);
 		this.render();
@@ -480,6 +487,10 @@ export class NativeBackend {
 		if (sawResize) {
 			this.#cx.cols = before.cols;
 			this.#sawResize = true;
+		}
+		if (this.#live && !before.feature("styles")) {
+			this.#sendStyles(this.#inline);
+			if (this.#screen) this.#sendStyles(this.#screen);
 		}
 		if (this.#cx.dark !== before.dark) this.#host.appearanceChanged(this.#cx.dark);
 		if (
@@ -602,6 +613,7 @@ export class NativeBackend {
 	#open(surface: Surface): void {
 		this.#write("o", { id: surface.id, mode: surface.mode, title: "omp", role: surface.role });
 		this.#sendPalette(surface);
+		this.#sendStyles(surface);
 	}
 
 	#close(surface: Surface, keep: boolean): void {
@@ -764,7 +776,7 @@ export class NativeBackend {
 		}
 	}
 
-	#write(verb: "o" | "f" | "t" | "x" | "q", body: unknown): void {
+	#write(verb: "o" | "f" | "t" | "s" | "x" | "q", body: unknown): void {
 		this.#record("out", verb, undefined, body);
 		this.#host.terminal.write(encodeTspJson(verb, body, undefined, this.#limit));
 	}

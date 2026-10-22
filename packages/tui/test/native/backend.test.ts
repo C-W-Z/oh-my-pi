@@ -253,3 +253,65 @@ describe("native backend", () => {
 		expect(h.terminal.rowBytes.slice(rows)).not.toContain("probe rows");
 	});
 });
+
+describe("native stylesheet lifecycle", () => {
+	it("does not send stylesheet messages to a terminal without styles support", async () => {
+		harness = await TspHarness.start(tui => tui.addChild(new Probe(md("plain"))), { features: [] });
+		expect(harness.terminal.log.filter(message => message.verb === "s")).toEqual([]);
+	});
+
+	it("installs styles before content on new, adopted, and replacement surfaces", async () => {
+		harness = await TspHarness.start(tui => tui.addChild(new Probe(md("session"))), { features: ["styles"] });
+		const h = harness;
+		const checkOpen = (from: number, surface: string | undefined): void => {
+			const messages = h.terminal.log.slice(from);
+			const open = messages.findIndex(message => message.verb === "o");
+			const style = messages.findIndex(message => message.verb === "s");
+			const frame = messages.findIndex(message => message.verb === "f");
+			expect(open).toBeGreaterThanOrEqual(0);
+			expect(style).toBeGreaterThan(open);
+			if (frame >= 0) expect(style).toBeLessThan(frame);
+			expect(messages[style]).toMatchObject({ body: { sf: surface } });
+		};
+		const session = h.terminal.surface;
+		checkOpen(0, session);
+
+		let from = h.terminal.log.length;
+		const overlay = h.tui.showOverlay(new Probe(md("overlay")), { fullscreen: true });
+		await h.render();
+		expect(h.terminal.surface).not.toBe(session);
+		checkOpen(from, h.terminal.surface);
+		overlay.hide();
+		h.flush();
+
+		h.tui.stop();
+		h.flush();
+		from = h.terminal.log.length;
+		h.tui.start();
+		h.flush();
+		expect(h.terminal.surface).toBe(session);
+		checkOpen(from, session);
+
+		from = h.terminal.log.length;
+		h.event({ ev: "gone", ids: [session!] });
+		expect(h.terminal.surface).not.toBe(session);
+		checkOpen(from, h.terminal.surface);
+	});
+
+	it("styles an already-open optimistic surface when the real hello advertises support", async () => {
+		harness = await TspHarness.start(tui => tui.addChild(new Probe(md("session"))), {
+			expected: true,
+			manualProbe: true,
+		});
+		const h = harness;
+		const session = h.terminal.surface;
+		expect(h.terminal.log.filter(message => message.verb === "s")).toEqual([]);
+		const from = h.terminal.log.length;
+		h.terminal.answerProbe({ features: ["styles"] });
+		h.flush();
+		const messages = h.terminal.log.slice(from);
+		expect(messages.filter(message => message.verb === "s")).toMatchObject([{ body: { sf: session } }]);
+		expect(messages.filter(message => message.verb === "o" || message.verb === "x")).toEqual([]);
+		expect(h.terminal.surface).toBe(session);
+	});
+});

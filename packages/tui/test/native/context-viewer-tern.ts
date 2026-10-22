@@ -80,6 +80,13 @@ function footerGeometry(layout: Layout): { viewport: Element; footer: Element } 
 		`Scroller overlaps footer: ${viewport.rect}; footer ${footer.rect}`,
 	);
 	assert(!footer.path.startsWith(`${viewport.path}>`), "Footer is inside the scrolling/clipping region");
+	const head = one(layout, "div.sf-ov-head");
+	const topGap = viewport.rect[1] - (head.rect[1] + head.rect[3]);
+	const bottomGap = footer.rect[1] - (viewport.rect[1] + viewport.rect[3]);
+	assert(
+		Math.abs(topGap) <= tolerance && Math.abs(bottomGap) <= tolerance,
+		`Viewport must meet header and footer: top gap ${topGap}px, bottom gap ${bottomGap}px`,
+	);
 	return { viewport, footer };
 }
 
@@ -262,8 +269,47 @@ try {
 	assert(selectedTree.count === 1 && selectedTree.nodes[0]!.text.includes("[ENTRY-1]"), "Down did not select ENTRY-1");
 	assert(contains(afterKey.viewport, await selected()), "Keyboard after wheel did not reveal the selected entry");
 	fixed(initial.footer, afterKey.footer, "Footer after keyboard reveal");
+
+	await ctl("key", "enter");
+	await until("entry detail view", async () => {
+		const tree: TreeResponse = JSON.parse(await ctl("tree", '[data-role="omp.context"]'));
+		const viewport: Layout = JSON.parse(await ctl("dump", ".sf-list-scroll.max"));
+		// tree summarizes long text, so wait for the detail header and removal of the preview.
+		return tree.count === 1 && tree.nodes[0]!.text.includes("[ENTRY-1]") && viewport.elements.length === 0;
+	});
+	await capture("detail");
+	await ctl("key", "escape");
+	await until("selected entry after Back", async () => {
+		const tree: TreeResponse = JSON.parse(await ctl("tree", "[data-mark=pick]"));
+		const viewport: Layout = JSON.parse(await ctl("dump", ".sf-list-scroll.max"));
+		return (
+			tree.count === 1 &&
+			tree.nodes[0]!.text.includes("[ENTRY-1]") &&
+			viewport.elements.length === 1 &&
+			contains(viewport.elements[0]!, await selected())
+		);
+	});
+	footerGeometry(await capture("back"));
+
+	await ctl("resize", "700", "480");
+	await until("narrow Native layout", async () => {
+		const card: Layout = JSON.parse(await ctl("dump", ".sf-ov-card"));
+		return card.elements.length === 1 && card.elements[0]!.rect[2] < one(before, "div.sf-ov-card").rect[2];
+	});
+	const narrow = footerGeometry(await capture("narrow"));
+	await ctl("key", "down");
+	await until("next header visible at narrow size", async () => {
+		const tree: TreeResponse = JSON.parse(await ctl("tree", "[data-mark=pick]"));
+		if (tree.count !== 1 || !tree.nodes[0]!.text.includes("[ENTRY-2]")) return false;
+		const pick = await selected();
+		return (
+			pick.rect[1] >= narrow.viewport.rect[1] - tolerance &&
+			pick.rect[1] < narrow.viewport.rect[1] + narrow.viewport.rect[3]
+		);
+	});
+	footerGeometry(await capture("narrow-selected"));
 	console.log(
-		`PASS Native ContextViewer: footer outside viewport, real wheel moved content ${movement}px, fixed footer, keyboard reveal`,
+		`PASS Native ContextViewer: aligned header/footer, wheel moved ${movement}px, keyboard reveal, Back and narrow-window clipping`,
 	);
 	if (keep)
 		console.log(

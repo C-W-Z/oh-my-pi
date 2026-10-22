@@ -1,0 +1,13 @@
+/* Keep the preview viewport edge-to-edge; inset its content inside the scroller. */
+.sf-overlay[data-role="omp.overlay.contextPreview"] > .sf-ov-card > .sf-ov-body {
+	padding-top: 0;
+}
+
+.sf-overlay[data-role="omp.overlay.contextPreview"] .sf-list-slot {
+	padding-top: 16px;
+}
+
+/* Tern sets footer margins inline; retain its side and bottom bleed. */
+.sf-overlay[data-role="omp.overlay.contextPreview"] [data-role="omp.actions"] {
+	margin-top: 0 !important;
+}

@@ -17,6 +17,7 @@
 - Fixed native context previews adding an extra row on selection and showing inconsistent truncation hints.
 - Fixed native context viewer returning from full content without reliably revealing the selected entry.
 - Fixed native context entry previews and selection markers overflowing beneath the footer while preserving mouse-wheel scrolling.
+- Fixed native context entry previews leaving gaps between the scrolling area and the sheet's title and footer in Tern.
 - Fixed context viewer timestamps retaining the previous clock format after switching between 12-hour and 24-hour time.
 - Fixed context viewer retaining full-content caches for previously viewed entries when browsing large outputs.
 - Fixed context viewer showing shared thinking counts as individual block usage and empty interrupted thinking as zero tokens.

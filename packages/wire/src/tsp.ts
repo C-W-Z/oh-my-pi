@@ -28,7 +28,7 @@ export const TSP_DEFAULT_APC_LIMIT = 65_536;
 export const TSP_DEFAULT_CREDITS = 2;
 
 /** One-letter message verb. */
-export type TspVerb = "q" | "o" | "f" | "b" | "t" | "x" | "r" | "e";
+export type TspVerb = "q" | "o" | "f" | "b" | "t" | "s" | "x" | "r" | "e";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Vocabulary

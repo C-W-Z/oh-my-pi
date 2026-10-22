@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `s` stylesheet verb to `TspVerb`
+
 ## [18.10.2] - 2026-10-12
 
 ### Added
