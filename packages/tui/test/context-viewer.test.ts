@@ -697,6 +697,19 @@ describe("ContextViewer preview and scrolling", () => {
 		});
 	});
 
+	it("renders no empty rows for an entry's trailing newlines in either renderer", () => {
+		const h = harness(fixture({ id: "result/0", label: "read result", tokens: 1, text: "trailing body\n\n\n" }));
+		select(h.viewer, "tool-output");
+		const preview = h.render();
+		const body = preview.findIndex(line => line.includes("trailing body"));
+		// One separator row, then the next entry's header.
+		expect(preview[body + 2]).toContain("[bash result]");
+		expect(nativeText(h.viewer.describe(cx))).not.toContain("trailing body\n\n");
+		h.viewer.handleInput("\r");
+		// The body text node ends at the source text; the action bar follows directly.
+		expect(nativeText(h.viewer.describe(cx))).toContain("trailing body\nBack");
+	});
+
 	it("opens the tail of a single source line even when only part of that line fits the preview", () => {
 		const data = fixture({
 			id: "result/0",

@@ -313,7 +313,8 @@ export class ContextViewer implements Component {
 		const maxChars = Math.max(1, this.#width) * budget * 2;
 		const metadata = this.#entryMetadata(entry, true).join("\n");
 		const metadataLength = Math.min(metadata.length, maxChars);
-		const body = entry.text;
+		// Providers often end thinking and tool output with newlines; they render as empty rows.
+		const body = entry.text.trimEnd();
 		const bodyLength = Math.min(body.length, Math.max(0, maxChars - metadataLength - (metadataLength ? 1 : 0)));
 		return {
 			metadata: this.#safeContent(metadata.slice(0, metadataLength)),
@@ -607,7 +608,7 @@ export class ContextViewer implements Component {
 	#entryBodyText(): string {
 		const entry = this.#entry!;
 		if (this.#entryBodyCache?.entry !== entry) {
-			this.#entryBodyCache = { entry, text: this.#safeContent(entry.text) };
+			this.#entryBodyCache = { entry, text: this.#safeContent(entry.text.trimEnd()) };
 			this.#ansiEntryLayoutWidth = undefined;
 		}
 		return this.#entryBodyCache.text;
