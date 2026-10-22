@@ -475,6 +475,14 @@ describe("context snapshot message projection and snapshots", () => {
 		expect(session.messages).toEqual(before);
 	});
 
+	it("keeps a tool call without arguments inspectable and charges no phantom thinking", () => {
+		const call = { type: "toolCall", name: "read", id: "call", arguments: undefined };
+		const assistant = reply([call as unknown as AssistantMessage["content"][number]]);
+		const data = buildSessionContextView(sessionWith({ messages: [assistant] }));
+		expect(category(data, "tool-calls").entries[0]).toMatchObject({ label: "read", text: "null" });
+		expect(category(data, "assistant-thinking").entries).toEqual([]);
+	});
+
 	it("rebuilds thinking after continuity changes without mutating earlier snapshots or production caches", () => {
 		const assistant = {
 			...reply([

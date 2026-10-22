@@ -11,6 +11,7 @@ import type {
 	ContextViewEntry,
 } from "@oh-my-pi/pi-tui/overlays/context-viewer";
 import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
+import { stringifyJson } from "@oh-my-pi/pi-utils";
 import type { AgentSession } from "./agent-session";
 import { computeSessionContextBreakdown } from "./context-usage-runtime";
 import { type ContextViewMessage, convertMessagesForContextView } from "./messages";
@@ -67,7 +68,8 @@ function estimateAssistantBlocks(
 		if (block.type === "text") return tokenizer.countTokens(block.text);
 		if (block.type === "toolCall") {
 			try {
-				return tokenizer.countTokens([block.name, JSON.stringify(block.arguments) ?? "null"]);
+				// Same serializer as Tokenizer.countMessage, so the reasoning residual stays exact.
+				return tokenizer.countTokens([block.name, stringifyJson(block.arguments) ?? "null"]);
 			} catch {
 				return tokenizer.countTokens(block.name);
 			}
@@ -265,7 +267,7 @@ function appendAssistantMessageEntries(
 		let text: string;
 		if (block.type === "toolCall") {
 			try {
-				text = JSON.stringify(block.arguments, null, 2);
+				text = stringifyJson(block.arguments, 2) ?? "null";
 			} catch {
 				text = "[Arguments unavailable]";
 			}
