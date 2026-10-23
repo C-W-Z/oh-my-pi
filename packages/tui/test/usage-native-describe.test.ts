@@ -457,7 +457,7 @@ describe("createUsageRowBlock describe", () => {
 			second: "2-digit",
 			hour12: true,
 		});
-		expect(twelve.line).toContain(`${clock.format(timestamp)} · `);
+		expect(twelve.line).toContain(`"${clock.format(timestamp)} · `);
 		expect(twelve.title).toBe(`2026-01-01 ${clockWithSeconds.format(timestamp)}`);
 		const twentyFour = shown(false);
 		expect(twentyFour.line).toContain('"18:05 · ');
